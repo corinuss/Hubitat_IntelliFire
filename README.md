@@ -5,6 +5,15 @@ This module is based heavily on [intellifire4py](https://github.com/jeeftor/inte
 
 Except for initialization, the fireplace is controlled entirely via local http directly to the fireplace.  During setup, an apiKey unique to the fireplace (and some other ids) must be pulled from your online IntelliFire account to enable communication with the fireplace.
 
+## Current status as of version 0.2
+* Fireplace driver can be manually added.
+* All commands are available and are executed locally.
+* Manual polling is supported.
+* Coming soon (before version 1.0)
+  * Automatic periodic polling
+  * Error reporting and network retries
+  * App to automatically add fireplaces using IntelliFire credentails.
+
 ## Requirements
 * Fireplace must have an IntelliFire WiFi module installed, and must already be registered and configured with an IntelliFire account via the IntelliFire app.
 * Fireplace should have a static IP address.  (Use your router's DHCP setting to assign an IP to the fireplace.)
@@ -13,10 +22,10 @@ Except for initialization, the fireplace is controlled entirely via local http d
 This method is NOT recommended.  A configuration app that automates this process more safely will be coming soon.
 
 * Sign into the [HHT Web Interface](http://iftapi.net/webaccess/login.html) and obtain the following information:
- * Your user hash (aka user id)
- * Your fireplace's serial id
- * Your fireplace's apiKey
+  * Your user hash (aka user id)
+  * Your fireplace's serial id
+  * Your fireplace's apiKey
 * On your hub, create a virtual device.
- * Set the type to IntelliFire Fireplace
- * Set the Device Network ID to "IntelliFire-\<serial_id\>" using the serial id you obtained from the website.
+  * Set the type to IntelliFire Fireplace
+  * Set the Device Network ID to "IntelliFire-\<serial_id\>" using the serial id you obtained from the website.
 * After creating the device, set the IP Address, User Id, and ApiKey preferences with the information obtained from the website.
