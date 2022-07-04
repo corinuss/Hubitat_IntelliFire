@@ -1,0 +1,18 @@
+{
+  "packageName": "Hubitat IntelliFire",
+  "author": "corinuss",
+  "version": "0.2",
+  "minimumHEVersion": "0.0",
+  "licenseFile": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/LICENSE",
+  "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
+  "dateReleased": "2022-07-03",
+  "drivers": [
+    {
+      "id": "e4f1934b-7beb-4baf-a032-13dc0c7779f6",
+      "name": "IntelliFire Fireplace",
+      "namespace": "IntelliFire",
+      "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace.groovy",
+      "required": true
+    }
+  ]
+}
