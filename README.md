@@ -5,12 +5,14 @@ This module is based heavily on [intellifire4py](https://github.com/jeeftor/inte
 
 Except for initialization, the fireplace is controlled entirely via local http directly to the fireplace.  During setup, an apiKey unique to the fireplace (and some other ids) must be pulled from your online IntelliFire account to enable communication with the fireplace.
 
-## Current status as of version 0.2
+## Current status as of version 0.3
 * Fireplace driver can be manually added.
 * All commands are available and are executed locally.
-* Manual polling is supported.
+* Automatic polling is active.
+  * 5 seconds after ever Hubitat command.
+  * Every 5 minutes while the fireplace is on.  Every 15 minutes when fireplace is off.
+    * This is to periodically synchronize with changes from the remote/webapp without hammering the fireplace too much.  These times may be tweaked later.
 * Coming soon (before version 1.0)
-  * Automatic periodic polling
   * Error reporting and network retries
   * App to automatically add fireplaces using IntelliFire credentails.
 

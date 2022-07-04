@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    07/03/2022 v0.3.0   - Automatic polling.
  *    07/03/2022 v0.2.0   - Added manual Polling.  Added a few missing commands.  On() can restore previous thermostat mode.  Code cleanup.
  *    06/22/2022 v0.1.0   - Initial publish.  Basic commands implemented but not stable.
  *
@@ -38,8 +39,8 @@ metadata
 {
     definition (name: 'IntelliFire Fireplace', namespace: 'IntelliFire', author: 'Eric Will')
     {
-        capability "FanControl"    // TODO Remove me?
-        capability "Polling"
+        capability "FanControl"
+        //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
         capability "Refresh"
         capability "Switch"
         capability "TemperatureMeasurement"
@@ -50,9 +51,9 @@ metadata
         command 'configure'
         command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
         command 'setPilotLight', [[name: "Pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
-        command 'setLightLevel', [[name: "Light level (0-3)", type:"NUMBER"]]
-        command 'setFlameHeight', [[name: "Flame height (0-4)", type:"NUMBER"]]
-        command 'setTimer', [[name: "Timer (0-180)", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
+        command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
+        command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
+        command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'setThermostatMode', [[name: "Thermostat Mode", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
 
         attribute "fanspeed", "number"
@@ -66,7 +67,7 @@ metadata
         attribute "thermostat", "number"
         attribute "timer", "number"
         attribute "timeremaining", "number"
-}
+    }
     
     preferences
     {
@@ -94,6 +95,7 @@ void installed()
 void configure()
 {
     sendEvent(name: "supportedFanSpeeds", value: FanControlSpeed)
+    refresh(true)
 }
 
 void poll()
@@ -101,10 +103,10 @@ void poll()
     refresh()
 }
 
-void refresh()
+void refresh(forceSchedule = false)
 {
     // Update current state from fireplace.
-    log.info "Polling..."
+    log.info "Refreshing status..."
     httpGet("http://${settings.ipAddress}/poll")
     { resp ->
         logDebug "Status ${resp.getStatus()}"        
@@ -181,8 +183,23 @@ void refresh()
         // If 'thermostat' is on, it will toggle 'power' to turn the flame on and off according to room temperature.
         // From a practical control perspective, we should consider the fireplace to be "on" while the thermostat is
         // in control, regardless of actual flame state.
-        def switchStatus = device.currentValue("power") || device.currentValue("thermostat")
-        sendEvent(name: "switch", value: switchStatus ? "on" : "off", description:"power or thermostat is on")
+        def previousSwitchStatus = device.currentValue("switch")
+        def switchStatus = (device.currentValue("power") || device.currentValue("thermostat")) ? "on" : "off"
+        sendEvent(name: "switch", value: switchStatus, description:"power or thermostat is on")
+        
+        if (switchStatus != previousSwitchStatus || forceSchedule)
+        {
+            if (switchStatus == "on")
+            {
+                log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
+                runEvery5Minutes("refresh")
+            }
+            else
+            {
+                log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
+                runEvery15Minutes("refresh")
+            }
+        }
     }
 }
 
@@ -206,7 +223,7 @@ void setSpeed(String fanspeed)
 void cycleSpeed()
 {
     // Poll to get current value, then update to next value
-    poll()
+    refresh()
     
     int newFanspeed = device.currentValue("fanspeed") + 1
     if (newFanspeed >= FanControlSpeed.size())
@@ -258,7 +275,7 @@ void setPilotLight(enabled)
 void setThermostatMode(enabled)
 {
     // Enable/disable Thermostat mode
-    poll()
+    refresh()
     def setPointValue = OnOffValue[enabled] ? device.currentValue("setpointLast") : 0
     sendLocalCommand("THERMOSTAT_SETPOINT", setPointValue)
 }
@@ -353,7 +370,8 @@ def sendLocalCommand(command, value)
     
     //TODO: End retry loop
 
-    // TODO Request a poll soon
+    // Force a refresh a few seconds after the command
+    runIn(5, "refresh", [overwrite: true, data: [forceSchedule: true]])
 }
 
 def getChallenge()
@@ -446,7 +464,7 @@ private static final INTELLIFIRE_COMMANDS =
     "SOFT_RESET":
     [  // This can be used to "soft reset the unit" -> probably dont ever need it.
         cloudCommand: "soft_reset",
-        localCommand: "soft_reset",  // Unaware of the local command for this one here
+        localCommand: "reset",  // Unaware of the local command for this one here
         min: 1,
         max: 1
     ]
