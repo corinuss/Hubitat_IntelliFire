@@ -25,10 +25,10 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    07/04/2022 v0.4.0   - Error states now reported.  Also filter out temporarily-bad temperature data.
  *    07/03/2022 v0.3.0   - Automatic polling.
  *    07/03/2022 v0.2.0   - Added manual Polling.  Added a few missing commands.  On() can restore previous thermostat mode.  Code cleanup.
  *    06/22/2022 v0.1.0   - Initial publish.  Basic commands implemented but not stable.
- *
  */
 
 import groovy.transform.Field
@@ -56,6 +56,7 @@ metadata
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'setThermostatMode', [[name: "Thermostat Mode", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
 
+        attribute "errors", "string"
         attribute "fanspeed", "number"
         attribute "height", "number"
         attribute "light", "number"
@@ -74,8 +75,8 @@ metadata
         input name: "ipAddress", type: "text", title: "Local IP Address", required: true
         input name: "apiKey", type: "text", title: "API Key", description: "Find this on IntelliFire's servers", required: true
         input name: "userId", type: "text", title: "User ID", description: "Find this on IntelliFire's servers", required: true
-        input name: "thermostatOnDefault", type: "bool", title: "Thermostat on by default?", description: "When turning on the fireplace, should the thermostat be enabled by default?", required: true, defaultValue: false
-        input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", required: true, defaultValue: false
+        input name: "thermostatOnDefault", type: "bool", title: "When turning on the fireplace, should the thermostat be enabled by default?", defaultValue: false
+        input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", defaultValue: false
     }
 }
 
@@ -120,11 +121,15 @@ void refresh(forceSchedule = false)
             //logDebug "Processing $param = $value"
             switch (param) {
                 case "temperature":
-                    // Need to rename the fireplace's raw attribute since it conflicts with TemperatureMeasurement's 'temperature'
-                    sendEvent(name: "temperatureRaw", value: value, unit: "°C", description: "Raw fireplace poll data")
-                
-                    // TemperatureMeasurement
-                    sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(value), unit: "°${getTemperatureScale()}")
+                    // Thermostat data sometimes cut out, so only send temperature events if the data is valid...
+                    if (json["feature_thermostat"] == 1)
+                    {
+                        // Need to rename the fireplace's raw attribute since it conflicts with TemperatureMeasurement's 'temperature'
+                        sendEvent(name: "temperatureRaw", value: value, unit: "°C", description: "Raw fireplace poll data")
+
+                        // TemperatureMeasurement
+                        sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(value), unit: "°${getTemperatureScale()}")
+                    }
                     break
 
                 case "fanspeed":
@@ -152,6 +157,16 @@ void refresh(forceSchedule = false)
                     }
                     break
 
+                case "errors":
+                    // First convert the error integers into short error code strings for our attributes.
+                    def errorList = []
+                    value.each { errorInt -> errorList << ERROR_MESSAGE_VALUE_MAP[errorInt] }
+                    sendEvent(name: "errors", value: errorList)
+                    
+                    // Now output the error messages to the log.
+                    errorList.each { errorCode -> log.error "${ERROR_MESSAGES[errorCode]}" }
+                    break
+                
                 // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
                 case "light":                   // Fireplace light
                 case "height":                  // Flame height
@@ -164,9 +179,9 @@ void refresh(forceSchedule = false)
                 //case "serial":                // We already know this, and it doesn't change
                 //case "battery":               // Emergency battery level (USB-C connection)
                 //case "feature_light":         // Does this fireplace have a light?
+                //case "feature_thermostat":    // Does this fireplace have a thermostat and temperature data?
+                //case "power_vent":            // Does this fireplace have a power vent?
                 //case "feature_fan":           // Does this fireplace have a fan?
-                //case "power_vent":            // unknown
-                //case "errors":                // List of current errors reported by the fireplace?
                 //case "fw_version":            // Numeric firmware version (not useful)
                 //case "fw_ver_string":         // String firmware version
                 //case "downtime":              // unknown
@@ -186,7 +201,7 @@ void refresh(forceSchedule = false)
         def previousSwitchStatus = device.currentValue("switch")
         def switchStatus = (device.currentValue("power") || device.currentValue("thermostat")) ? "on" : "off"
         sendEvent(name: "switch", value: switchStatus, description:"power or thermostat is on")
-        
+
         if (switchStatus != previousSwitchStatus || forceSchedule)
         {
             if (switchStatus == "on")
@@ -341,7 +356,6 @@ def sendLocalCommand(command, value)
     def payload = "post:$commandData"
     def apiKeyBytes = HexUtils.hexStringToByteArray(settings.apiKey)
     
-    // TODO: Start retry loop here
     def challengeBytes = HexUtils.hexStringToByteArray(getChallenge())
 
     def digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -361,14 +375,12 @@ def sendLocalCommand(command, value)
     httpPost([
         uri: url,
         body: data,
-        timeout: 5 // TODO - TBD
-         ])
+        timeout: 5
+    ])
     { resp ->
         logDebug "Status ${resp.getStatus()}"        
         logDebug "Data: ${resp.data}"
     }
-    
-    //TODO: End retry loop
 
     // Force a refresh a few seconds after the command
     runIn(5, "refresh", [overwrite: true, data: [forceSchedule: true]])
@@ -469,3 +481,37 @@ private static final INTELLIFIRE_COMMANDS =
         max: 1
     ]
 ]
+
+@Field
+private static final ERROR_MESSAGE_VALUE_MAP =
+[
+    2:    "PILOT_FLAME",
+    4:    "FLAME",
+    6:    "FAN_DELAY",
+    64:   "MAINTENANCE",
+    129:  "DISABLED",
+    130:  "PILOT_FLAME",
+    132:  "FAN",
+    133:  "LIGHTS",
+    134:  "ACCESSORY",
+    144:  "SOFT_LOCK_OUT",
+    145:  "DISABLED",
+    642:  "OFFLINE",
+    3269: "ECM_OFFLINE"
+].withDefault { otherError -> "$otherError" }
+
+@Field
+private static final ERROR_MESSAGES =
+[
+    "PILOT_FLAME":   "Pilot Flame Error: Your appliance has been safely disabled. Please contact your dealer and report this issue.",
+    "FAN_DELAY":     "Fan Information: Fan will turn on within 3 minutes. Your appliance has a built-in delay that prevents the fan from operating within the first 3 minutes of turning on the appliance. This allows the air to be heated prior to circulation.",
+    "FLAME":         "Pilot Flame Error. Your appliance has been safely disabled. Please contact your dealer and report this issue.",
+    "MAINTENANCE":   "Maintenance: Your appliance is due for a routine maintenance check. Please contact your dealer to ensure your appliance is operating at peak performance.",
+    "DISABLED":      "Appliance Safely Disabled: Your appliance has been disabled. Please contact your dealer and report this issue.",
+    "FAN":           "Fan Error. Your appliance has detected that an accessory is not functional. Please contact your dealer and report this issue.",
+    "LIGHTS":        "Lights Error. Your appliance has detected that an accessory is not functional. Please contact your dealer and report this issue.",
+    "ACCESSORY":     "Your appliance has detected that an AUX port or accessory is not functional. Please contact your dealer and report this issue.",
+    "SOFT_LOCK_OUT": "Sorry your appliance did not start. Try again by pressing Flame ON.",
+    "OFFLINE":       "Your appliance is currently offline.",
+    "ECM_OFFLINE":   "ECM is offline.",
+].withDefault { otherError -> "Unknown Error. ($otherError)" }
