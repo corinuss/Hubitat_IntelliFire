@@ -37,7 +37,7 @@ import java.security.MessageDigest
 
 metadata
 {
-    definition (name: 'IntelliFire Fireplace', namespace: 'IntelliFire', author: 'Eric Will')
+    definition (name: 'IntelliFire Fireplace', namespace: 'IntelliFire', author: 'corinuss')
     {
         capability "FanControl"
         //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
