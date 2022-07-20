@@ -1,11 +1,11 @@
 {
   "packageName": "Hubitat IntelliFire",
   "author": "corinuss",
-  "version": "0.4",
+  "version": "0.5.0",
   "minimumHEVersion": "0.0",
   "licenseFile": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/LICENSE",
   "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
-  "dateReleased": "2022-07-03",
+  "dateReleased": "2022-07-19",
   "drivers": [
     {
       "id": "e4f1934b-7beb-4baf-a032-13dc0c7779f6",
@@ -13,6 +13,17 @@
       "namespace": "IntelliFire",
       "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace.groovy",
       "required": true
+    }
+  ],
+  "apps": [
+    {
+      "id": "bcf7712d-10f7-48da-8f5d-5d6203b3a146",
+      "name": "IntelliFire Fireplace Manager",
+      "namespace": "IntelliFire",
+      "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/App/IntelliFire_Fireplace_Manager.groovy",
+      "required": true,
+      "oauth": false,
+      "primary": true
     }
   ]
 }
