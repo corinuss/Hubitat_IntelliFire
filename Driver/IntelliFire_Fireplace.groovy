@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    07/19/2022 v0.5.0   - Minor fixes to support the IntelliFire Fireplace Manager app and Google Home Community (WIP)
  *    07/04/2022 v0.4.0   - Error states now reported.  Also filter out temporarily-bad temperature data.
  *    07/03/2022 v0.3.0   - Automatic polling.
  *    07/03/2022 v0.2.0   - Added manual Polling.  Added a few missing commands.  On() can restore previous thermostat mode.  Code cleanup.
@@ -55,6 +56,7 @@ metadata
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'setThermostatMode', [[name: "Thermostat Mode", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setOnOff', [[name: "On/Off", type:"ENUM", description:"Turn the fireplace on or off.", constraints: OnOffValue.collect {k,v -> k}]]
 
         attribute "errors", "string"
         attribute "fanspeed", "number"
@@ -82,10 +84,10 @@ metadata
 
 void logDebug (msg)
 {
-	if (enableDebugLogging)
+    if (enableDebugLogging)
     {
-		log.debug msg
-	}
+        log.debug msg
+    }
 }
 
 void installed()
@@ -96,7 +98,12 @@ void installed()
 void configure()
 {
     sendEvent(name: "supportedFanSpeeds", value: FanControlSpeed)
-    refresh(true)
+
+    // Don't register refresh cycles until we have an IP address.
+    if (settings.ipAddress != null)
+    {
+        refresh(true)
+    }
 }
 
 void poll()
@@ -267,6 +274,18 @@ void off()
     sendLocalCommand("POWER", 0)
 }
 
+void setOnOff(enabled)
+{
+    if (enabled == "on")
+    {
+        on()
+    }
+    else
+    {
+        off()
+    }
+}
+
 void setHeatingSetpoint(temperature)
 {
     // Set thermostat temperature
@@ -410,8 +429,8 @@ def getChallenge()
 
 @Field Map OnOffValue =
 [
-	"off": 0,
-	"on": 1
+    "off": 0,
+    "on": 1
 ]
 
 @Field

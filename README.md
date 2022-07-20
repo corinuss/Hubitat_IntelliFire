@@ -1,19 +1,17 @@
-# HubitatIntelliFire
+# Hubitat IntelliFire
  IntelliFire control for Hubitat
 
 This module is based heavily on [intellifire4py](https://github.com/jeeftor/intellifire4py) by jeeftor for Home Assistant.
 
 Except for initialization, the fireplace is controlled entirely via local http directly to the fireplace.  During setup, an apiKey unique to the fireplace (and some other ids) must be pulled from your online IntelliFire account to enable communication with the fireplace.
 
-## Current status as of version 0.4.0
-* Fireplace driver can be manually added.
+## Current status as of version 0.5.0
+* Fireplace driver should be added via the IntelliFire Fireplace Manager app.  (Delete your old manually-created Fireplace instance to avoid issues.)
 * All commands are available and are executed locally.
 * Automatic polling is active.
   * 5 seconds after ever Hubitat command.
   * Every 5 minutes while the fireplace is on.  Every 15 minutes when fireplace is off.
     * This is to periodically synchronize with changes from the remote/webapp without hammering the fireplace too much.  These times may be tweaked later.
-* Coming soon (before version 1.0)
-  * App to automatically add fireplaces using IntelliFire credentails.
 
 ## Requirements
 * Fireplace must have an IntelliFire WiFi module installed, and must already be registered and configured with an IntelliFire account via the IntelliFire app.
@@ -30,18 +28,6 @@ Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpacka
 * Click next to install Hubitat IntelliFire.
 
 If you don't want to use Hubitat Package Manager, you can also just manually copy the Driver code into your hub.
-
-## Manual driver setup
-This method is NOT recommended.  A configuration app that automates this process more safely will be coming soon.
-
-* Sign into the [HHT Web Interface](http://iftapi.net/webaccess/login.html) and obtain the following information:
-  * Your user hash (aka user id)
-  * Your fireplace's serial id
-  * Your fireplace's apiKey
-* On your hub, create a virtual device.
-  * Set the type to IntelliFire Fireplace
-  * Set the Device Network ID to "IntelliFire-\<serial_id\>" using the serial id you obtained from the website.
-* After creating the device, set the IP Address, User Id, and ApiKey preferences with the information obtained from the website.
 
 ## Troubleshooting
 
