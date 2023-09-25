@@ -40,7 +40,7 @@ import java.security.MessageDigest
 
 metadata
 {
-    definition (name: 'IntelliFire Fireplace', namespace: 'IntelliFire', author: 'corinuss')
+    definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss")
     {
         capability "FanControl"
         //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
@@ -129,6 +129,8 @@ void refresh(forceSchedule = false)
         def jsonText = resp.data.text
         logDebug "$jsonText"
         
+        // To set the Switch status properly, we need to store the new power and thermostat status
+        // within this function, since events don't immediately apply.  May as well intialize them
         // with current status, even though they should always be set during refresh...
         def powerStatus = device.currentValue("power")
         def thermostatStatus = device.currentValue("thermostat")
