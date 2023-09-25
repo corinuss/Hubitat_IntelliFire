@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    09/25/2023 v0.6.0   - Save (and forget) website credentials
  *    07/19/2022 v0.5.0   - Initial version (Add a fireplace)
  */
 
@@ -94,7 +95,7 @@ def mainPage()
         section("")
         {
             href "loginPage", title: "Add Fireplace(s)", description: "Add a new fireplace or refresh an existing fireplace from online settings"
-            input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+            input(name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true)
         }
     }
 }
@@ -109,8 +110,9 @@ def loginPage()
             paragraph "We need to obtain some information from IntelliFire's servers to allow us to gain local access to the fireplace.  Once the fireplace is set up, all future communication will be done locally."
             paragraph "Before continuing, please ensure that you can access your fireplace(s) from the IntelliFire mobile app, and that you've placed your fireplace(s) on a static IP.  (Use your router's DHCP to reserve an IP for the fireplace.)"
             paragraph "Please provide IntelliFire login credentials."
-            input("username", "email", title: "Username", description: "IntelliFire Username (email address)")
-            input("password", "password", title: "Password", description: "IntelliFire Password")
+            input(name: "username", type: "email", title: "Username", description: "IntelliFire Username (email address)")
+            input(name: "password", type: "password", title: "Password", description: "IntelliFire Password")
+            input(name: "saveCredentials", type: "bool", title: "Save Credentials?", required: true, defaultValue: true)
         }
     }
 }
@@ -216,7 +218,18 @@ Boolean doLogin()
         return false
     }
     
+    clearCredentialsIfNeeded()
+    
     return success
+}
+
+def clearCredentialsIfNeeded()
+{
+    if (!settings.saveCredentials)
+    {
+        app.removeSetting("username")
+        app.removeSetting("password")
+    }
 }
 
 def getLocations()

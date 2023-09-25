@@ -25,6 +25,8 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    09/25/2023 v0.6.0   - Flame height controllable via SwitchLevel.
+ *                          Google Home Community can now control the fireplace thermostat and fan.
  *    07/19/2022 v0.5.0   - Minor fixes to support the IntelliFire Fireplace Manager app and Google Home Community (WIP)
  *    07/04/2022 v0.4.0   - Error states now reported.  Also filter out temporarily-bad temperature data.
  *    07/03/2022 v0.3.0   - Automatic polling.
@@ -44,23 +46,28 @@ metadata
         //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
         capability "Refresh"
         capability "Switch"
+        capability "SwitchLevel"
         capability "TemperatureMeasurement"
         capability "ThermostatHeatingSetpoint"
         capability "ThermostatSetpoint"
         capability "Tone"
         
         command 'configure'
-        command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
-        command 'setPilotLight', [[name: "Pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
-        command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
+        command 'setLevel', [[name: "Flame height percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Flame Height values [0-4].  Used by SwitchLevel capability."]]
+        command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
+        command 'setPilotLight', [[name: "Pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
+        command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
+        command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
-        command 'setThermostatMode', [[name: "Thermostat Mode", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setOnOff', [[name: "On/Off", type:"ENUM", description:"Turn the fireplace on or off.", constraints: OnOffValue.collect {k,v -> k}]]
 
         attribute "errors", "string"
         attribute "fanspeed", "number"
+        attribute "fanspeedpercent", "number"
         attribute "height", "number"
+        attribute "level", "number"
         attribute "light", "number"
         attribute "pilot", "number"
         attribute "power", "number"
@@ -122,6 +129,10 @@ void refresh(forceSchedule = false)
         def jsonText = resp.data.text
         logDebug "$jsonText"
         
+        // with current status, even though they should always be set during refresh...
+        def powerStatus = device.currentValue("power")
+        def thermostatStatus = device.currentValue("thermostat")
+
         def json = parseJson(jsonText)
         json.each
         { param, value ->
@@ -144,6 +155,9 @@ void refresh(forceSchedule = false)
 
                     // FanControl
                     sendEvent(name: "speed", value: FanControlSpeed[value])
+
+                    // Google Fan Speed Percentages
+                    sendEvent(name: "fanspeedpercent", value: value*25, unit: "%", description: "Fan speed")
                     break
 
                 case "setpoint":
@@ -163,6 +177,13 @@ void refresh(forceSchedule = false)
                         sendEvent(name: "thermostatSetpoint", value: convertCelsiusToUserTemperature(value/100), unit: "°${getTemperatureScale()}")
                     }
                     break
+                    
+                case "height":
+                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+
+                    // SwitchLevel
+                    sendEvent(name: "level", value: value*25, unit: "%", description: "Flame height")
+                    break
 
                 case "errors":
                     // First convert the error integers into short error code strings for our attributes.
@@ -173,13 +194,22 @@ void refresh(forceSchedule = false)
                     // Now output the error messages to the log.
                     errorList.each { errorCode -> log.error "${ERROR_MESSAGES[errorCode]}" }
                     break
-                
+
+                // Flame is on
+                case "power":
+                    powerStatus = value
+                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    break;
+
+                // Thermostat is controlling flame power
+                case "thermostat":
+                    thermostatStatus = value
+                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    break;
+
                 // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
                 case "light":                   // Fireplace light
-                case "height":                  // Flame height
                 case "pilot":                   // Cold-weather pilot light is enabled
-                case "power":                   // Flame is on
-                case "thermostat":              // Thermostate is controlling flame power
                 case "timer":                   // Timer is activated
                 case "timeremaining":           // Seconds until timer turns off fireplace
                 //case "name":                  // Blank on my fireplace
@@ -206,7 +236,7 @@ void refresh(forceSchedule = false)
         // From a practical control perspective, we should consider the fireplace to be "on" while the thermostat is
         // in control, regardless of actual flame state.
         def previousSwitchStatus = device.currentValue("switch")
-        def switchStatus = (device.currentValue("power") || device.currentValue("thermostat")) ? "on" : "off"
+        def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
         sendEvent(name: "switch", value: switchStatus, description:"power or thermostat is on")
 
         if (switchStatus != previousSwitchStatus || forceSchedule)
@@ -223,6 +253,12 @@ void refresh(forceSchedule = false)
             }
         }
     }
+}
+
+void setSpeedPercentage(fanspeedPercentage)
+{
+    int fanspeed = (int)((fanspeedPercentage+24)/25);
+    sendLocalCommand("FAN_SPEED", fanspeed)
 }
 
 void setSpeed(String fanspeed)
@@ -260,7 +296,7 @@ void on()
     if (thermostatOnDefault)
     {
         // Let's try to restore the last thermostat value, if we know it.
-        setThermostatMode("on")
+        setThermostatControl("on")
     }
     else
     {
@@ -290,7 +326,6 @@ void setHeatingSetpoint(temperature)
 {
     // Set thermostat temperature
     def setpoint = convertUserTemperatureToCelsius(temperature) * 100
-    
     sendLocalCommand("THERMOSTAT_SETPOINT", setpoint)
 }
 
@@ -306,11 +341,24 @@ void setPilotLight(enabled)
     sendLocalCommand("PILOT", OnOffValue[enabled])
 }
 
-void setThermostatMode(enabled)
+void setThermostatControl(enabled)
 {
     // Enable/disable Thermostat mode
     refresh()
-    def setPointValue = OnOffValue[enabled] ? device.currentValue("setpointLast") : 0
+    def setPointValue = 0
+    if (OnOffValue[enabled])
+    {
+        setPointValue = device.currentValue("setpointLast");
+        
+        // Handle the case when this hasn't been set.
+        // This also occasionally becomes null, possibly when not used for a very long time (ie, Summer)
+        if (setPointValue == null)
+        {
+            setPointValue = 0;
+        }
+    }
+
+    log.debug "setThermostatControl THERMOSTAT_SETPOINT $setPointValue"
     sendLocalCommand("THERMOSTAT_SETPOINT", setPointValue)
 }
 
@@ -320,10 +368,21 @@ void setLightLevel(level)
     sendLocalCommand("LIGHT", level)
 }
 
-void setFlameHeight(level)
+void setLevel(levelPercentage)
+{
+    // Map the percentage to our flame height levels.
+    //  0    = flame height 0
+    //  1-25 = flame height 1
+    // 26-50 = flame height 2
+    // ...
+    flameHeight = (int)((levelPercentage+24)/25);
+    setFlameHeight(flameHeight);
+}
+
+void setFlameHeight(flameHeight)
 {
     // Set flame height 0-4
-    sendLocalCommand("FLAME_HEIGHT", level)
+    sendLocalCommand("FLAME_HEIGHT", flameHeight)
 }
 
 void setTimer(minutes)
@@ -401,8 +460,10 @@ def sendLocalCommand(command, value)
         logDebug "Data: ${resp.data}"
     }
 
-    // Force a refresh a few seconds after the command
-    runIn(5, "refresh", [overwrite: true, data: [forceSchedule: true]])
+    // Force a refresh a few seconds after the command.
+    // This needs to be short enough so Google can get a response before timing out,
+    // but long enough to not soft-lock the fireplace.
+    runIn(3, "refresh", [overwrite: true, data: [forceSchedule: true]])
 }
 
 def getChallenge()
