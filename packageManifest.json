@@ -6,18 +6,18 @@
   "dateReleased": "2023-09-25",
   "apps": [
     {
-      "id": "bcf7712d-10f7-48da-8f5d-5d6203b3a146",
+      "id": "03b42492-bb99-46a7-89cb-ce02d05e5d98",
       "name": "IntelliFire Fireplace Manager",
       "namespace": "IntelliFire",
       "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/App/IntelliFire_Fireplace_Manager.groovy",
       "required": true,
       "oauth": false,
-      "primary": true
+      "primary": false
     }
   ],
   "drivers": [
     {
-      "id": "e4f1934b-7beb-4baf-a032-13dc0c7779f6",
+      "id": "461731b4-539f-4dc8-bf18-cf6e9df59398",
       "name": "IntelliFire Fireplace",
       "namespace": "IntelliFire",
       "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace.groovy",
