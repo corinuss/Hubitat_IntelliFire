@@ -20,29 +20,29 @@ If you don't want to use Hubitat Package Manager, you can also just manually cop
 ## Limitations
 
 ### Thermostat Set Point not saved on fireplace
-When thermostat controls are turned off, the thermostat set point is lost.  This means that your physical remote, the Intellifire mobile app, and the Hubitat device driver have no way of sharing this value.
+When thermostat controls are turned off, the thermostat set point is lost.  This means that your physical remote, the IntelliFire mobile app, and the Hubitat device driver have no way of sharing this value.
 
 To work around this limitation, this device driver will attempt to cache the current set point whenever it is non-zero and will restore it when the thermostat is enabled, but it might not catch every change by the mobile app or physical remote due to polling intervals.  It is highly recommended that you control the fireplace with only one of these systems, or expect to reset the thermostat each time.
 
 ### All temperatures are based in Celsius
-The Intellifire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, also adjust the temperature by at least 2°F. 
+The IntelliFire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, also adjust the temperature by at least 2°F. 
 
 ### Light limitation
 It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, you can control it by calling **setLightLevel**.  This can be done in the *Rule Machine* via a Custom Action.
 
 ## Troubleshooting
-The Intellifire modules are notorious for being a bit unstable.  They should be fine in most normal use caes, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
+The IntelliFire modules are notorious for being a bit unstable.  They should be fine in most normal use caes, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
 
-* Try controlling the fireplace via the offical Intellifire mobile app.  Does it work?  If not, there's something wrong with your fireplace that needs to be corrected.  I do not provide support for the fireplaces, but usually one or more of these steps resolves the issue.  Try each of these steps below one at a time to see if the issue is resolved.
+* Try controlling the fireplace via the offical IntelliFire mobile app.  Does it work?  If not, there's something wrong with your fireplace that needs to be corrected.  I do not provide support for the fireplaces, but usually one or more of these steps resolves the issue.  Try each of these steps below one at a time to see if the issue is resolved.
   * Reset the WiFi module (there's a button on the module you can press) or toggle main power switch on the fireplace off and on to reboot the module.  The main power switch can often be found on the edge of your fireplace.
     * Alternatively, try a Soft Reset on the [iftapi.net](http://iftapi.net/webaccess/login.html) site.
     * Test using the mobile app.
-  * Delete the fireplace from your Intellifire account (using the mobile app) and try re-adding the Fireplace back onto your account.
-    * If you don't see the "Intellifire" access point during setup, you might need to cut the power entirely to your fireplace (via switch or circuit breaker) to complete the fireplace reset process before it can be added.
+  * Delete the fireplace from your IntelliFire account (using the mobile app) and try re-adding the Fireplace back onto your account.
+    * If you don't see the "IntelliFire" access point during setup, you might need to cut the power entirely to your fireplace (via switch or circuit breaker) to complete the fireplace reset process before it can be added.
     * Test using the mobile app.  If the mobile app can control the fireplace, you will need to refresh Hubitat keys for the fireplace (below)
 
 * If the mobile app can control the fireplace, try refreshing Hubitat's settings for the fireplace.
-  * Launch the Intellifire Fireplace Manager app that's included with this Hubitat package.
+  * Launch the IntelliFire Fireplace Manager app that's included with this Hubitat package.
   * Sign in, select your fireplace, and complete the process as if you were adding the fireplace again.
   * Assuming you didn't delete your old fireplace device, all of your settings will be kept.  Only the various keys and IP address will be updated.
 
@@ -80,6 +80,6 @@ Once you've configured a device, don't forget to tag your fireplace as this type
 ### Sample Commands
 *Hey Google...*
 * *Turn on the fireplace.*
-* *Set the fireplace temperature to 70 degress.*
+* *Set the fireplace temperature to 70 degrees.*
 * *Set the fireplace fan to 50 percent.*
 * *Set the fireplace fan to High.*
