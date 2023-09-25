@@ -7,6 +7,11 @@
       "id": "7cd64587-d285-416d-8363-6eaebc4fd0fe",
       "name": "Hubitat IntelliFire",
       "category": "Control",
+      "tags": [
+        "Appliance",
+        "Climate Control",
+        "Temperature & Humidity"
+      ],
       "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/packageManifest.json",
       "description": "Hubitat interface for controlling Intellifire fireplaces"
     }

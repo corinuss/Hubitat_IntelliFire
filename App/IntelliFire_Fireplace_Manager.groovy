@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.
  *    09/25/2023 v0.6.0   - Save (and forget) website credentials
  *    07/19/2022 v0.5.0   - Initial version (Add a fireplace)
  */
