@@ -4,15 +4,6 @@
   "version": "1.0",
   "minimumHEVersion": "2.1.9",
   "dateReleased": "2023-09-25",
-  "drivers": [
-    {
-      "id": "e4f1934b-7beb-4baf-a032-13dc0c7779f6",
-      "name": "IntelliFire Fireplace",
-      "namespace": "IntelliFire",
-      "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace.groovy",
-      "required": true
-    }
-  ],
   "apps": [
     {
       "id": "bcf7712d-10f7-48da-8f5d-5d6203b3a146",
@@ -22,6 +13,15 @@
       "required": true,
       "oauth": false,
       "primary": true
+    }
+  ],
+  "drivers": [
+    {
+      "id": "e4f1934b-7beb-4baf-a032-13dc0c7779f6",
+      "name": "IntelliFire Fireplace",
+      "namespace": "IntelliFire",
+      "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace.groovy",
+      "required": true
     }
   ]
 }
