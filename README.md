@@ -13,14 +13,7 @@ Except for initialization via the app, the fireplace is controlled entirely via 
 * Fireplace should have a static IP address.  (Use your router's DHCP setting to reserve an IP to the fireplace.)
 
 ## Installation
-Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.  This package has not yet been added to the main list, so you'll need to manually point the manager to the online location of the package.
-
-* Launch the Hubitat Package Manager app.
-* Select "Install"
-* Select "From a URL"
-* Enter this URL for the package
-  * https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/packageManifest.json
-* Click next to install Hubitat IntelliFire.
+Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.
 
 If you don't want to use Hubitat Package Manager, you can also just manually copy the Driver and App code into your hub.
 
@@ -35,7 +28,9 @@ To work around this limitation, this device driver will attempt to cache the cur
 It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, you can control it by calling **setLightLevel**.  This can be done in the *Rule Machine* via a Custom Action.
 
 ## Troubleshooting
-Try controlling the fireplace via the offical Intellfire mobile app.  Does it work?  If not, there's something wrong with your fireplace that needs to be corrected.  I do not provide support for the fireplaces, but usually one or more of these steps resolves the issue.  Try each of these steps below one at a time to see if the issue is resolved.
+The Intellifire modules are notorious for being a bit unstable.  They should be fine in most normal use caes, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
+
+* Try controlling the fireplace via the offical Intellifire mobile app.  Does it work?  If not, there's something wrong with your fireplace that needs to be corrected.  I do not provide support for the fireplaces, but usually one or more of these steps resolves the issue.  Try each of these steps below one at a time to see if the issue is resolved.
   * Reset the WiFi module (there's a button on the module you can press) or toggle main power switch on the fireplace off and on to reboot the module.  The main power switch can often be found on the edge of your fireplace.
     * Alternatively, try a Soft Reset on the [iftapi.net](http://iftapi.net/webaccess/login.html) site.
     * Test using the mobile app.
@@ -43,7 +38,7 @@ Try controlling the fireplace via the offical Intellfire mobile app.  Does it wo
     * If you don't see the "Intellifire" access point during setup, you might need to cut the power entirely to your fireplace (via switch or circuit breaker) to complete the fireplace reset process before it can be added.
     * Test using the mobile app.  If the mobile app can control the fireplace, you will need to refresh Hubitat keys for the fireplace (below)
 
-If the mobile app can control the fireplace, try refreshing Hubitat's settings for the fireplace.
+* If the mobile app can control the fireplace, try refreshing Hubitat's settings for the fireplace.
   * Launch the Intellifire Fireplace Manager app that's included with this Hubitat package.
   * Sign in, select your fireplace, and complete the process as if you were adding the fireplace again.
   * Assuming you didn't delete your old fireplace device, all of your settings will be kept.  Only the various keys and IP address will be updated.
