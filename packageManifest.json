@@ -2,8 +2,7 @@
   "packageName": "Hubitat IntelliFire",
   "author": "corinuss",
   "version": "0.6",
-  "minimumHEVersion": "0.0",
-  "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
+  "minimumHEVersion": "2.1.9",
   "dateReleased": "2023-09-25",
   "drivers": [
     {
