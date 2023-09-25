@@ -13,9 +13,9 @@ Except for initialization via the app, the fireplace is controlled entirely via 
 * Fireplace should have a static IP address.  (Use your router's DHCP setting to reserve an IP to the fireplace.)
 
 ## Installation
-Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.
+Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.  If you don't want to use Hubitat Package Manager, you can also just manually copy the Driver and App code into your hub.
 
-If you don't want to use Hubitat Package Manager, you can also just manually copy the Driver and App code into your hub.
+After installation, run the IntelliFire Fireplace Manager app that's now installed on your Hubitat.  Sign in using the same credentials as the IntelliFire mobile app, and the app will automatically pull the keys that it needs to manage your fireplace, and will find and create your fireplace device.  This is the only time communication leaves your network.
 
 ## Limitations
 
