@@ -3,7 +3,6 @@
   "author": "corinuss",
   "version": "0.6",
   "minimumHEVersion": "0.0",
-  "licenseFile": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/LICENSE",
   "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
   "dateReleased": "2023-09-25",
   "drivers": [
