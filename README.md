@@ -24,6 +24,9 @@ When thermostat controls are turned off, the thermostat set point is lost.  This
 
 To work around this limitation, this device driver will attempt to cache the current set point whenever it is non-zero and will restore it when the thermostat is enabled, but it might not catch every change by the mobile app or physical remote due to polling intervals.  It is highly recommended that you control the fireplace with only one of these systems, or expect to reset the thermostat each time.
 
+### All temperatures are based in Celsius
+The Intellifire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, also adjust the temperature by at least 2°F. 
+
 ### Light limitation
 It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, you can control it by calling **setLightLevel**.  This can be done in the *Rule Machine* via a Custom Action.
 
