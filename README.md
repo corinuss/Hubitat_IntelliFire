@@ -79,8 +79,7 @@ Once you've configured a device, don't forget to tag your fireplace as this type
 
 ### Sample Commands
 *Hey Google...*
-
-*Turn on the fireplace.*
-*Set the fireplace temperature to 70 degress.*
-*Set the fireplace fan to 50 percent.*
-*Set the fireplace fan to High.*
+* *Turn on the fireplace.*
+* *Set the fireplace temperature to 70 degress.*
+* *Set the fireplace fan to 50 percent.*
+* *Set the fireplace fan to High.*
