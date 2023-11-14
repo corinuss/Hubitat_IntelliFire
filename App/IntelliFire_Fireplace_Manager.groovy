@@ -7,7 +7,7 @@
  *  information queried from the IntelliFire servers.
  *
  *  MIT License
- *  Copyright (c) 2022 Eric Will
+ *  Copyright (c) 2023 Eric Will
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
  *  in the Software without restriction, including without limitation the rights
@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.
  *    09/25/2023 v0.6.0   - Save (and forget) website credentials
  *    07/19/2022 v0.5.0   - Initial version (Add a fireplace)
@@ -160,6 +161,9 @@ def fireplacesPage(params)
     return dynamicPage(name: "fireplacesPage", title: "Fireplaces", nextPage: "createResultsPage") {
         section("Choose fireplaces to add or refresh") {
             input(name: "fireplaces", title: "Fireplaces", type: "enum", required: true, multiple: true, options: getFireplacesList())
+            paragraph "If your fireplace has a light, would you also like to create a virtual device that can be used to control the light via the standard Hubitat Light interface?"
+            paragraph "(If you say no and change your mind, you can also create this Light later via a button from the Fireplace device.)"
+            input(name: "createLightDevices", title: "Create Virtual Light devices?", type: "bool", defaultValue: true)
         }
     }
 }
@@ -322,12 +326,20 @@ def getFireplaceInfo(fireplaceSerial)
             else
             {
                 fireplace.ipAddress = resp.data.ipv4_address
+
                 if (resp.data.containsKey("feature_thermostat"))
                 {
                     logDebug "feature_thermostat ${resp.data.feature_thermostat}"
                 }
                 fireplace.hasThermostat = (resp.data.containsKey("feature_thermostat") && resp.data.feature_thermostat == "1")
                 logDebug "fireplace.hasThermostat ${fireplace.hasThermostat}"
+
+                if (resp.data.containsKey("feature_light"))
+                {
+                    logDebug "feature_light ${resp.data.feature_light}"
+                }
+                fireplace.hasLight = (resp.data.containsKey("feature_light") && resp.data.feature_light == "1")
+                logDebug "fireplace.hasLight ${fireplace.hasLight}"
                 
                 createFireplace(fireplace)
             }
@@ -364,7 +376,13 @@ def createFireplace(fireplace)
         device.updateSetting("apiKey", fireplace.apiKey)
         device.updateSetting("userId", userId)
         device.updateSetting("thermostatOnDefault", fireplace.hasThermostat)
+        device.setSerial(fireplace.serial)
         device.configure()
+
+        if (settings.createLightDevices && fireplace.hasLight)
+        {
+            device.createVirtualLightDevice(overrideHasLight: true)
+        }
 
         // Report result string
         def action = isCreatingFireplace ? "created" : "refreshed"

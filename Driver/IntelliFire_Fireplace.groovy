@@ -7,7 +7,7 @@
  *  https://github.com/jeeftor/intellifire4py
  *
  *  MIT License
- *  Copyright (c) 2022 Eric Will
+ *  Copyright (c) 2023 Eric Will
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
  *  in the Software without restriction, including without limitation the rights
@@ -25,6 +25,10 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
+ *                          Initial version of Light virtual device.
+ *                          Made singleThreaded to attempt to reduce soft-locks possibly caused by simulanteous communications with fireplace.
+ *                          Removed redundant setOnOff command.
  *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.
  *    09/25/2023 v0.6.0   - Flame height controllable via SwitchLevel.
  *                          Google Home Community can now control the fireplace thermostat and fan.
@@ -41,8 +45,9 @@ import java.security.MessageDigest
 
 metadata
 {
-    definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss")
+    definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss", singleThreaded: true)
     {
+        //capability "Light"      // Conflicts with "Switch".  Use a virtual device to handle the "Light" capability.
         capability "FanControl"
         //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
         capability "Refresh"
@@ -54,6 +59,9 @@ metadata
         capability "Tone"
         
         command 'configure'
+        command 'createVirtualLightDevice'
+        command 'lightOff'
+        command 'lightOn'
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
         command 'setLevel', [[name: "Flame height percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Flame Height values [0-4].  Used by SwitchLevel capability."]]
         command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
@@ -62,16 +70,19 @@ metadata
         command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
         command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
-        command 'setOnOff', [[name: "On/Off", type:"ENUM", description:"Turn the fireplace on or off.", constraints: OnOffValue.collect {k,v -> k}]]
 
         attribute "errors", "string"
         attribute "fanspeed", "number"
+        attribute "fanspeedLast", "number"
         attribute "fanspeedpercent", "number"
+        attribute "feature_light", "number"
         attribute "height", "number"
         attribute "level", "number"
         attribute "light", "number"
+        attribute "lightLast", "number"
         attribute "pilot", "number"
         attribute "power", "number"
+        attribute "serial", "string"
         attribute "setpoint", "number"
         attribute "setpointLast", "number"
         attribute "temperatureRaw", "number"
@@ -86,6 +97,7 @@ metadata
         input name: "apiKey", type: "text", title: "API Key", description: "Find this on IntelliFire's servers", required: true
         input name: "userId", type: "text", title: "User ID", description: "Find this on IntelliFire's servers", required: true
         input name: "thermostatOnDefault", type: "bool", title: "When turning on the fireplace, should the thermostat be enabled by default?", defaultValue: false
+        input name: "shouldRestoreFanSpeed", type: "bool", title: "When turning on the fireplace, should we ensure the fan speed is restored to its last value?", defaultValue: false
         input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", defaultValue: false
     }
 }
@@ -114,11 +126,58 @@ void configure()
     }
 }
 
+void setSerial(serial)
+{
+    if (serial != null)
+    {
+        // Pre-populate the serial number if it was provided to us.
+        // Guarantees we have it in case the fireplace isn't available.
+        sendEvent(name: "serial", value: serial)
+    }
+}
+
+void createVirtualLightDevice(overrideHasLight = false)
+{
+    if (overrideHasLight && device.currentValue("feature_light") != 1)
+    {
+        log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
+        return
+    }
+
+    def serial = device.currentValue("serial")
+    if (serial == null)
+    {
+        log.error "No serial available.  Cannot create child Light device."
+        return
+    }
+
+    def fireplaceLightDni = "IntelliFireLight-$serial"
+
+    def childDevice = getChildDevice(fireplaceLightDni)
+    if (childDevice == null)
+    {
+        def myLabel = device.getLabel()
+        def childLabel = "$myLabel Light"
+
+        log.info "Creating new Light child device $childLabel"
+        addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
+    }
+    else
+    {
+        log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
+    }
+
+    // Refresh to allow the new device to get current status.
+    refresh()
+}
+
+// Poll
 void poll()
 {
     refresh()
 }
 
+// Refresh
 void refresh(forceSchedule = false)
 {
     // Update current state from fireplace.
@@ -161,6 +220,13 @@ void refresh(forceSchedule = false)
 
                     // Google Fan Speed Percentages
                     sendEvent(name: "fanspeedpercent", value: value*25, unit: "%", description: "Fan speed")
+
+                    if (value != 0)
+                    {
+                        // Save off the currently set fan speed, but only if non-zero.
+                        // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
+                        sendEvent(name: "fanspeedLast", value: value, description: "Last non-zero fanspeed")
+                    }
                     break
 
                 case "setpoint":
@@ -210,15 +276,39 @@ void refresh(forceSchedule = false)
                     sendEvent(name: param, value: value, description: "Raw fireplace poll data")
                     break;
 
+                case "light":
+                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+
+                    if (value != 0)
+                    {
+                        // Only save the light value if it's not off.  Used to restore the light when
+                        // issued a simple "lightOn" request.
+                        sendEvent(name: "lightLast", value: value, description: "Last non-zero light value")
+                    }
+
+                    // Notify any child devices implementing Light control
+                    try
+                    {
+                        getChildDevices()?.each
+                        {
+                            if (it.hasCapability("Light"))
+                            {
+                                it.setLightLevelFromParent(value)
+                            }
+                        }
+                    } catch (err) {
+                        logDebug "Either no children exist or error finding child devices for some reason: ${err}"
+                    }
+                    break
+
                 // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
-                case "light":                   // Fireplace light
                 case "pilot":                   // Cold-weather pilot light is enabled
                 case "timer":                   // Timer is activated
                 case "timeremaining":           // Seconds until timer turns off fireplace
                 //case "name":                  // Blank on my fireplace
-                //case "serial":                // We already know this, and it doesn't change
+                case "serial":                  // Device unique serial (used for identification)
                 //case "battery":               // Emergency battery level (USB-C connection)
-                //case "feature_light":         // Does this fireplace have a light?
+                case "feature_light":           // Does this fireplace have a light?
                 //case "feature_thermostat":    // Does this fireplace have a thermostat and temperature data?
                 //case "power_vent":            // Does this fireplace have a power vent?
                 //case "feature_fan":           // Does this fireplace have a fan?
@@ -258,12 +348,14 @@ void refresh(forceSchedule = false)
     }
 }
 
+// Google Home Community
 void setSpeedPercentage(fanspeedPercentage)
 {
     int fanspeed = (int)((fanspeedPercentage+24)/25);
-    sendLocalCommand("FAN_SPEED", fanspeed)
+    setSpeedInternal(fanspeed)
 }
 
+// FanControl
 void setSpeed(String fanspeed)
 {
     // Set the fan speed.
@@ -277,25 +369,60 @@ void setSpeed(String fanspeed)
             fanspeedInt = i
         }
     }
-        
-    sendLocalCommand("FAN_SPEED", fanspeedInt)
+
+    setSpeedInternal(fanspeedInt)
 }
 
+void setSpeedInternal(int fanspeed)
+{
+    // Explicitly set Last fan speed here.
+    // Ensures that if we turn off the fan, we don't try to restore it later.
+    // Also ensures we save the fan speed changes while the flame is currently off due to thermostat control.
+    sendEvent(name: "fanspeedLast", value: 0, description: "Last non-zero fanspeed")
+    
+    sendLocalCommand("FAN_SPEED", fanspeed)
+}
+
+void restoreFanSpeed()
+{
+    def fanspeedLast = device.currentValue("fanspeedLast")
+    if (fanspeedLast != null && fanspeedLast != 0)
+    {
+        logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
+
+        refresh()
+        if (device.currentValue("fanspeed") == 0)
+        {
+            log.info "Restoring fan speed to $fanspeedLast"
+            setSpeedInternal(fanspeedLast)
+        }
+    }
+}
+
+// FanControl
 void cycleSpeed()
 {
     // Poll to get current value, then update to next value
     refresh()
     
-    int newFanspeed = device.currentValue("fanspeed") + 1
+    def newFanspeed = device.currentValue("fanspeed") + 1
     if (newFanspeed >= FanControlSpeed.size())
     {
         newFanspeed = 0
     }
-    sendLocalCommand("FAN_SPEED", newFanspeed)
+
+    setSpeedInternal(newFanspeed)
 }
 
+// Switch
 void on()
 {
+    if (shouldRestoreFanSpeed)
+    {
+        logDebug "Will check fan speed in 5 minutes."
+        runIn(5*60, "restoreFanSpeed", [overwrite: true])
+    }
+
     if (thermostatOnDefault)
     {
         // Let's try to restore the last thermostat value, if we know it.
@@ -307,24 +434,16 @@ void on()
     }
 }
 
+// Switch
 void off()
 {
+    unschedule("restoreFanSpeed")
+
     // Turn off all modes.
     sendLocalCommand("POWER", 0)
 }
 
-void setOnOff(enabled)
-{
-    if (enabled == "on")
-    {
-        on()
-    }
-    else
-    {
-        off()
-    }
-}
-
+// ThermostatHeatingSetpoint
 void setHeatingSetpoint(temperature)
 {
     // Set thermostat temperature
@@ -361,24 +480,48 @@ void setThermostatControl(enabled)
         }
     }
 
-    log.debug "setThermostatControl THERMOSTAT_SETPOINT $setPointValue"
+    logDebug "setThermostatControl THERMOSTAT_SETPOINT $setPointValue"
     sendLocalCommand("THERMOSTAT_SETPOINT", setPointValue)
 }
 
+// Light (via Light virtual device)
+void lightOn()
+{
+    // Restore the previous light level.
+    def lightLevel = device.currentValue("lightLast")
+    if (lightLevel == null)
+    {
+        // If not yet set, set to max.
+        lightLevel = INTELLIFIRE_COMMANDS["LIGHT"].max
+    }
+    
+    setLightLevel(lightLevel)
+}
+
+// Light (via Light virtual device)
+void lightOff()
+{
+    setLightLevel(0)
+}
+
+// SwitchLevel (via Light virtual device)
 void setLightLevel(level)
 {
     // Set light level 0-3
     sendLocalCommand("LIGHT", level)
 }
 
-void setLevel(levelPercentage)
+// SwitchLevel
+void setLevel(level, duration = 0)
 {
+    // 'duration' is not used
+
     // Map the percentage to our flame height levels.
     //  0    = flame height 0
     //  1-25 = flame height 1
     // 26-50 = flame height 2
     // ...
-    flameHeight = (int)((levelPercentage+24)/25);
+    def flameHeight = (int)((level+24)/25);
     setFlameHeight(flameHeight);
 }
 
