@@ -27,6 +27,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/15/2023 v1.1.1   - Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  */
 
@@ -96,7 +97,7 @@ void setLightLevelFromParent(level)
 {
     levelPercentage = (int)(level * 33.34)
 
-    sendEvent(name: "light", value: level, description: "Light level")
-    sendEvent(name: "level", value: levelPercentage, unit: "%", description: "Light level percentage")
-    sendEvent(name: "switch", value: level != 0, description: "Light is on")
+    sendEvent(name: "light", value: level, descriptionText: "Light level")
+    sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "Light level percentage")
+    sendEvent(name: "switch", value: level != 0, descriptionText: "Light is on")
 }

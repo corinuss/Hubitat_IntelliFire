@@ -25,6 +25,8 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
+ *                          Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
  *                          Initial version of Light virtual device.
  *                          Made singleThreaded to attempt to reduce soft-locks possibly caused by simulanteous communications with fireplace.
@@ -47,8 +49,8 @@ metadata
 {
     definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss", singleThreaded: true)
     {
-        //capability "Light"      // Conflicts with "Switch".  Use a virtual device to handle the "Light" capability.
         capability "FanControl"
+        //capability "Light"      // Conflicts with "Switch".  Use a virtual device to handle the "Light" capability.
         //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
         capability "Refresh"
         capability "Switch"
@@ -65,6 +67,7 @@ metadata
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
         command 'setLevel', [[name: "Flame height percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Flame Height values [0-4].  Used by SwitchLevel capability."]]
         command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
+        command 'setOnOff', [[name: "On/Off", type:"ENUM", description:"Turn the fireplace on or off. (Same effect as the separate 'on' and 'off' buttons.)", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setPilotLight', [[name: "Pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
         command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
@@ -131,14 +134,14 @@ void setSerial(serial)
     if (serial != null)
     {
         // Pre-populate the serial number if it was provided to us.
-        // Guarantees we have it in case the fireplace isn't available.
+        // Guarantees we have it in case the fireplace isn't available during initialization from the Manager app.
         sendEvent(name: "serial", value: serial)
     }
 }
 
 void createVirtualLightDevice(overrideHasLight = false)
 {
-    if (overrideHasLight && device.currentValue("feature_light") != 1)
+    if (!overrideHasLight && device.currentValue("feature_light") != 1)
     {
         log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
         return
@@ -205,7 +208,7 @@ void refresh(forceSchedule = false)
                     if (json["feature_thermostat"] == 1)
                     {
                         // Need to rename the fireplace's raw attribute since it conflicts with TemperatureMeasurement's 'temperature'
-                        sendEvent(name: "temperatureRaw", value: value, unit: "°C", description: "Raw fireplace poll data")
+                        sendEvent(name: "temperatureRaw", value: value, unit: "°C", descriptionText: "Raw fireplace poll data")
 
                         // TemperatureMeasurement
                         sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(value), unit: "°${getTemperatureScale()}")
@@ -213,31 +216,31 @@ void refresh(forceSchedule = false)
                     break
 
                 case "fanspeed":
-                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
 
                     // FanControl
                     sendEvent(name: "speed", value: FanControlSpeed[value])
 
                     // Google Fan Speed Percentages
-                    sendEvent(name: "fanspeedpercent", value: value*25, unit: "%", description: "Fan speed")
+                    sendEvent(name: "fanspeedpercent", value: value*25, unit: "%", descriptionText: "Fan speed")
 
                     if (value != 0)
                     {
                         // Save off the currently set fan speed, but only if non-zero.
                         // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
-                        sendEvent(name: "fanspeedLast", value: value, description: "Last non-zero fanspeed")
+                        sendEvent(name: "fanspeedLast", value: value, descriptionText: "Last non-zero fanspeed")
                     }
                     break
 
                 case "setpoint":
                     // This is actually celsius * 100...
-                    sendEvent(name: param, value: value, unit: "°C * 100", description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, unit: "°C * 100", descriptionText: "Raw fireplace poll data")
                 
                     if (value != 0)
                     {
                         // Only update these events if we have a valid setpoint.  The app turns off the thermostat by setting it to 0, but
                         // we'll try to restore the previous setpoint automatically.
-                        sendEvent(name: "setpointLast", value: value, unit: "°C * 100", description: "Last non-zero setpoint")
+                        sendEvent(name: "setpointLast", value: value, unit: "°C * 100", descriptionText: "Last non-zero setpoint")
 
                         // ThermostatHeatingSetpoint
                         sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(value/100), unit: "°${getTemperatureScale()}")
@@ -248,10 +251,10 @@ void refresh(forceSchedule = false)
                     break
                     
                 case "height":
-                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
 
                     // SwitchLevel
-                    sendEvent(name: "level", value: value*25, unit: "%", description: "Flame height")
+                    sendEvent(name: "level", value: value*25, unit: "%", descriptionText: "Flame height")
                     break
 
                 case "errors":
@@ -267,23 +270,23 @@ void refresh(forceSchedule = false)
                 // Flame is on
                 case "power":
                     powerStatus = value
-                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
                     break;
 
                 // Thermostat is controlling flame power
                 case "thermostat":
                     thermostatStatus = value
-                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
                     break;
 
                 case "light":
-                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
 
                     if (value != 0)
                     {
                         // Only save the light value if it's not off.  Used to restore the light when
                         // issued a simple "lightOn" request.
-                        sendEvent(name: "lightLast", value: value, description: "Last non-zero light value")
+                        sendEvent(name: "lightLast", value: value, descriptionText: "Last non-zero light value")
                     }
 
                     // Notify any child devices implementing Light control
@@ -319,7 +322,7 @@ void refresh(forceSchedule = false)
                 //case "connection_quality":    // Connection quality of thermostat remote
                 //case "ecm_latency":           // unknown
                 //case "ipv4_address":          // We already know this.  Can't talk to the fireplace without it.                
-                    sendEvent(name: param, value: value, description: "Raw fireplace poll data")
+                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
                     break
             }
         }
@@ -330,7 +333,7 @@ void refresh(forceSchedule = false)
         // in control, regardless of actual flame state.
         def previousSwitchStatus = device.currentValue("switch")
         def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
-        sendEvent(name: "switch", value: switchStatus, description:"power or thermostat is on")
+        sendEvent(name: "switch", value: switchStatus, descriptionText:"power or thermostat is on")
 
         if (switchStatus != previousSwitchStatus || forceSchedule)
         {
@@ -378,7 +381,7 @@ void setSpeedInternal(int fanspeed)
     // Explicitly set Last fan speed here.
     // Ensures that if we turn off the fan, we don't try to restore it later.
     // Also ensures we save the fan speed changes while the flame is currently off due to thermostat control.
-    sendEvent(name: "fanspeedLast", value: 0, description: "Last non-zero fanspeed")
+    sendEvent(name: "fanspeedLast", value: 0, descriptionText: "Last non-zero fanspeed")
     
     sendLocalCommand("FAN_SPEED", fanspeed)
 }
@@ -441,6 +444,19 @@ void off()
 
     // Turn off all modes.
     sendLocalCommand("POWER", 0)
+}
+
+// Google Home Community (Thermostat Mode)
+void setOnOff(enabled)
+{
+    if (enabled == "on")
+    {
+        on()
+    }
+    else
+    {
+        off()
+    }
 }
 
 // ThermostatHeatingSetpoint
