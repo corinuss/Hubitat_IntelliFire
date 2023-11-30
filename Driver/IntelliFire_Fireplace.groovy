@@ -388,8 +388,8 @@ void setSpeedInternal(int fanspeed)
 
 void restoreFanSpeed()
 {
-    def fanspeedLast = device.currentValue("fanspeedLast")
-    if (fanspeedLast != null && fanspeedLast != 0)
+    int fanspeedLast = device.currentValue("fanspeedLast") ?: 0
+    if (fanspeedLast != 0)
     {
         logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
 
@@ -408,7 +408,7 @@ void cycleSpeed()
     // Poll to get current value, then update to next value
     refresh()
     
-    def newFanspeed = device.currentValue("fanspeed") + 1
+    int newFanspeed = (device.currentValue("fanspeed") ?: 0) + 1
     if (newFanspeed >= FanControlSpeed.size())
     {
         newFanspeed = 0
@@ -483,17 +483,12 @@ void setThermostatControl(enabled)
 {
     // Enable/disable Thermostat mode
     refresh()
-    def setPointValue = 0
+    int setPointValue = 0
     if (OnOffValue[enabled])
     {
-        setPointValue = device.currentValue("setpointLast");
-        
-        // Handle the case when this hasn't been set.
-        // This also occasionally becomes null, possibly when not used for a very long time (ie, Summer)
-        if (setPointValue == null)
-        {
-            setPointValue = 0;
-        }
+        // If not set (such as first run), set this to something reasonable so the flame comes on if the room is cold.
+        // Default value on the remote is 72F (22C).
+        setPointValue = device.currentValue("setpointLast") ?: 2200
     }
 
     logDebug "setThermostatControl THERMOSTAT_SETPOINT $setPointValue"
