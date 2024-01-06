@@ -3,23 +3,40 @@
 
 This module is based heavily on [intellifire4py](https://github.com/jeeftor/intellifire4py) by jeeftor for Home Assistant.
 
-Except for initialization via the app, the fireplace is controlled entirely via local http directly to the fireplace.  During setup, an apiKey unique to the fireplace (and some other ids) must be pulled from your online IntelliFire account to enable communication with the fireplace.
+During initialization via the Intellifire Manager App, an apiKey unique to the fireplace (and some other ids) must be pulled from your online IntelliFire account to enable communication with the fireplace.  Afterwards, if local control is chosen, the fireplace is controlled entirely via local http directly to the fireplace.
 
 ## Requirements
 * Fireplace must have an IntelliFire WiFi module installed.
 * Fireplace must be registered and configured with an IntelliFire account via the IntelliFire mobile app.  (You should be able to control the fireplace from your mobile app.)
   * Google: https://play.google.com/store/apps/details?id=com.hearthandhome.intellifire.android&pcampaignid=web_share
   * Apple: https://apps.apple.com/us/app/intellifire/id1456842149
-* Fireplace should have a static IP address.  (Use your router's DHCP setting to reserve an IP to the fireplace.)
+* If using local control, Fireplace should have a static IP address.  (Use your router's DHCP setting to reserve an IP to the fireplace.)
 
 ## Installation
 *(Coming soon)* Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.
 
 If you don't want to use Hubitat Package Manager, you can also just manually copy the Driver and App code into your hub.
 
-After installation, run the IntelliFire Fireplace Manager app that's now installed on your Hubitat.  Sign in using the same credentials as the IntelliFire mobile app, and the app will automatically pull the keys that it needs to manage your fireplace, and will find and create your fireplace device.  This is the only time communication leaves your network.
+After installation, run the IntelliFire Fireplace Manager app that's now installed on your Hubitat.  Sign in using the same credentials as the IntelliFire mobile app, and the app will automatically pull the keys that it needs to manage your fireplace, and will find and create your fireplace device.  If local control is chosen, this is the only time communication leaves your network.
+
+### Cloud vs Local - Which should I choose?
+I currently recommend Cloud control for stability reasons.  But here's a detailed breakdown on why to choose each one.
+
+Cloud control has the following advantages:
+* Significantly more stable.  Local control has a tendency to put the fireplace in a bad state (ECM_OFFLINE), requiring users to manually power cycle the module or fireplace every couple weeks.
+* Status updates are seen almost immediately due to long polling feature.  (Status updates during local control may be delayed a few minutes.)  This allows you to use the Intellifire remote or mobile app without the Hubitat app getting temporarlily out of sync.
+* Static IP for the fireplace is not required.
+
+Local control has the following advantages:
+* Internet not required after the fireplace is initially set up.  All traffic stays local to the network.  If the cloud goes down, the fireplace control continues to work.
+* No need to store online credentials in the app.
 
 ## Limitations
+
+### Local control is unstable
+The IntelliFire modules are notorious for being a bit unstable, where after some time (up to a few weeks) the module will stop responding to local commands and must be power cycled.  See the Troubleshooting section below for some tips on how to recover when you get into this state.
+
+Cloud commands do not seem to cause this stability issue.  In addition, due to the way the polling works, status updates are much more immediate when Cloud control is used.  For this reason, Cloud control is strongly recommended.
 
 ### Thermostat Set Point not saved on fireplace
 When thermostat controls are turned off, the thermostat set point is lost.  This means that your physical remote, the IntelliFire mobile app, and the Hubitat device driver have no way of sharing this value.
@@ -27,17 +44,18 @@ When thermostat controls are turned off, the thermostat set point is lost.  This
 To work around this limitation, this device driver will attempt to cache the current set point whenever it is non-zero and will restore it when the thermostat is enabled, but it might not catch every change by the mobile app or physical remote due to polling intervals.  It is highly recommended that you control the fireplace with only one of these systems, or expect to reset the thermostat each time.
 
 ### All temperatures are based in Celsius
-The IntelliFire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, also adjust the temperature by at least 2°F. 
+The IntelliFire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, adjust the temperature by at least 2°F each time.
 
 ### Light limitation
-It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, you can create a virtual light child device to control the Light like any other light.  This can be created in the  IntelliFire Fireplace Manager app during setup, or can be added later by pressing the **Create Virtual Light Device** button on the Fireplace.  Alternatively, you can control the light without the extra device by calling **setLightLevel**.  This can be done in the *Rule Machine* via a Custom Action.
+It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, a virtual light child device will be created to control the Light like any other light.  This will be created in the IntelliFire Fireplace Manager app during setup, or if deleted and be recreated later by pressing the **Create Virtual Light Device** button on the Fireplace.
 
 ## Troubleshooting
-The IntelliFire modules are notorious for being a bit unstable.  They should be fine in most normal use caes, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
+The IntelliFire modules are notorious for being a bit unstable.  They should be fine in most normal use cases, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
 
 * Try controlling the fireplace via the offical IntelliFire mobile app.  Does it work?  If not, there's something wrong with your fireplace that needs to be corrected.  I do not provide support for the fireplaces, but usually one or more of these steps resolves the issue.  Try each of these steps below one at a time to see if the issue is resolved.
   * Reset the WiFi module (there's a button on the module you can press) or toggle main power switch on the fireplace off and on to reboot the module.  The main power switch can often be found on the edge of your fireplace.
     * Alternatively, try a Soft Reset on the [iftapi.net](http://iftapi.net/webaccess/login.html) site.
+      * If you have saved your credentials in the Intellifire Manager App, you can also hit the Soft Reset button on your Hubitat device.
     * Test using the mobile app.
   * Delete the fireplace from your IntelliFire account (using the mobile app) and try re-adding the Fireplace back onto your account.
     * If you don't see the "IntelliFire" access point during setup, you might need to cut the power entirely to your fireplace (via switch or circuit breaker) to complete the fireplace reset process before it can be added.
@@ -65,10 +83,6 @@ The following lists the settings to change.  If a setting is not listed here, de
   * Temperature Setting (if you have a Thermostat)
     * Supported Modes: **Off, Heat**
       * Only these modes should be checked.
-    * Off Hubitat Mode: **off**
-    * Heat Hubitat Mode: **on**
-    * Set Mode Command: **setOnOff**
-    * Current Mode Attribute: **switch**
   * Fan Speed
     * (Optional) Supported Fan Speeds: **Low, Medium, Medium-High, High**
       * If you want to use names for fan speeds, only these four Hubitat speeds are supported.

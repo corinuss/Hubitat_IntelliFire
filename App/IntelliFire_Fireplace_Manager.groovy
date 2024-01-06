@@ -7,7 +7,7 @@
  *  information queried from the IntelliFire servers.
  *
  *  MIT License
- *  Copyright (c) 2023 Eric Will
+ *  Copyright (c) 2024 Eric Will
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
  *  in the Software without restriction, including without limitation the rights
@@ -97,7 +97,66 @@ def mainPage()
         section("")
         {
             href "loginPage", title: "Add Fireplace(s)", description: "Add a new fireplace or refresh an existing fireplace from online settings"
+            href "addCredentialsPage", title: "Add/Update Credentials", description: "Add or update online credientials."
+            href "removeCredentialsPage", title: "Remove Credentials", description: "Remove online credientials."
+
             input(name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true)
+        }
+    }
+}
+
+def addCredentialsPage()
+{
+    logDebug "addCredentialsPage"
+    
+    return dynamicPage(name: "addCredentialsPage", title: "Add/Update IntelliFire Credentials", nextPage: "addCredentialsResultPage") {
+        section("Login Credentials")
+        {
+            paragraph "Add or Update your Intellifire login credentials."
+            paragraph "This is required if you want to use cloud control, which is more reliable than local control."
+            input(name: "username", type: "email", title: "Username", description: "IntelliFire Username (email address)")
+            input(name: "password", type: "password", title: "Password", description: "IntelliFire Password")
+        }
+    }
+}
+
+def addCredentialsResultPage()
+{
+    logDebug "addCredentialsResultPage"
+    settings.saveCredentials = true
+
+    if (doLogin())
+    {
+        return dynamicPage(name: "addCredentialsSuccessPage", title: "Validated", nextPage: "mainPage") {
+            section("")
+            {
+                paragraph "Login successful."
+            }
+        }
+    }
+    else
+    {
+        return dynamicPage(name: "addCredentialsErrorPage", title: "Login Error") {
+            section("")
+            {
+                paragraph "The username or password you entered is incorrect."
+            }
+        }
+    }
+}
+
+def removeCredentialsPage()
+{
+    logDebug "removeCredentialsPage"
+
+    settings.saveCredentials = false
+    clearCredentialsIfNeeded()
+    clearCookies()
+
+    return dynamicPage(name: "removeCredentialsPage", title: "IntelliFire Credentials Removed", nextPage: "mainPage") {
+        section("Login Credentials")
+        {
+            paragraph "Your Intellifire credentials have been deleted."
         }
     }
 }
@@ -106,19 +165,18 @@ def loginPage()
 {
     logDebug "loginPage"
     
-    return dynamicPage(name: "loginPage", title: "Connect to IntelliFire Servers", nextPage: "loginResultPage" /*, uninstall: false, install: false, submitOnChange: true*/) {
+    return dynamicPage(name: "loginPage", title: "Connect to IntelliFire Servers", nextPage: "loginResultPage") {
         section("Login Credentials")
         {
-            paragraph "We need to obtain some information from IntelliFire's servers to allow us to gain local access to the fireplace.  Once the fireplace is set up, all future communication will be done locally."
+            paragraph "We need to obtain some information from IntelliFire's servers to allow us to gain local access to the fireplace.  Once the fireplace is set up, all future communication will be done locally (except soft-resets)."
             paragraph "Before continuing, please ensure that you can access your fireplace(s) from the IntelliFire mobile app, and that you've placed your fireplace(s) on a static IP.  (Use your router's DHCP to reserve an IP for the fireplace.)"
             paragraph "Please provide IntelliFire login credentials."
             input(name: "username", type: "email", title: "Username", description: "IntelliFire Username (email address)")
             input(name: "password", type: "password", title: "Password", description: "IntelliFire Password")
-            input(name: "saveCredentials", type: "bool", title: "Save Credentials?", required: true, defaultValue: true)
+            input(name: "saveCredentials", type: "bool", title: "Save Credentials?", description: "Prevents the need to re-enter credentials if you need to manually refresh the fireplace.  Saved credentials are also required for cloud control.", required: true, defaultValue: true)
         }
     }
 }
-
 
 def loginResultPage()
 {
@@ -161,9 +219,22 @@ def fireplacesPage(params)
     return dynamicPage(name: "fireplacesPage", title: "Fireplaces", nextPage: "createResultsPage") {
         section("Choose fireplaces to add or refresh") {
             input(name: "fireplaces", title: "Fireplaces", type: "enum", required: true, multiple: true, options: getFireplacesList())
-            paragraph "If your fireplace has a light, would you also like to create a virtual device that can be used to control the light via the standard Hubitat Light interface?"
-            paragraph "(If you say no and change your mind, you can also create this Light later via a button from the Fireplace device.)"
-            input(name: "createLightDevices", title: "Create Virtual Light devices?", type: "bool", defaultValue: true)
+        }
+
+        section("Local or Cloud Control?")
+        {            
+            paragraph "Local control does not require an internet connection once the fireplace is configured, but can sometimes lock up the wifi module, requiring a power cycle."
+            paragraph "Cloud control also reacts to status updates immediately, allowing the Hubitat device to stay more in sync with the mobile app and physical remote."
+            paragraph "Cloud control is recommended.  You can change this later on device settings."
+            if (settings.saveCredentials)
+            {
+                input(name: "enableCloudControl", title: "Enable Cloud Control?", type: "bool", defaultValue: true)
+            }
+            else
+            {
+                paragraph "Cloud control is disabled since credentials weren't saved."
+                settings.enableCloudControl = false;
+            }
         }
     }
 }
@@ -181,50 +252,74 @@ def createResultsPage(params)
     }
 }
 
-Boolean doLogin()
+String getRemoteServerRoot()
+{
+    return SERVER_ROOT
+}
+
+Boolean doLogin(clearCredentialsIfInvalid = false)
 {
     def success = false
-    clearCookies()
-    
-    try
+
+    if (!settings.username)
     {
-        def postBody = [
-            username: "${settings.username}",
-            password: "${settings.password}"
-            ]
-    
-        httpPost([
-                uri: "$SERVER_ROOT/login",
-                body: postBody
-            ])
-        { resp ->
-            def responseStatus = resp.status
-            logDebug "Status $responseStatus"
-            
-            gatherCookies(resp)
-            success = (responseStatus >= 200 && responseStatus < 300)
-        }
+        log.error "Login aborted.  Credentials not provided."
+        return false;
     }
-    catch (HttpResponseException e)
+
+    synchronized(this)
     {
-        if (e.getStatusCode() == 422)
+        clearCookies()
+        
+        try
         {
-            log.error "Invalid credentials: $e"
+            def postBody = [
+                username: "${settings.username}",
+                password: "${settings.password}"
+                ]
+        
+            httpPost([
+                    uri: "$SERVER_ROOT/login",
+                    body: postBody
+                ])
+            { resp ->
+                def responseStatus = resp.status
+                logDebug "Status $responseStatus"
+                
+                gatherCookies(resp)
+
+                // Bump the id so everyone knows credentials have changed.
+                state.loginUniqueId = (state.loginUniqueId :? 0) + 1
+                success = true
+            }
         }
-        else
+        catch (HttpResponseException e)
+        {
+            if (e.getStatusCode() == 422 || e.getStatusCode() == 403)
+            {
+                log.error "Invalid credentials: $e"
+
+                if (clearCredentialsIfInvalid)
+                {
+                    settings.saveCredentials = false
+                    clearCredentialsIfNeeded()
+                }
+            }
+            else
+            {
+                log.error "Error on login: $e"
+            }
+            return false
+        }
+        catch (e)
         {
             log.error "Error on login: $e"
+            return false
         }
-        return false
+        
+        clearCredentialsIfNeeded()
     }
-    catch (e)
-    {
-        log.error "Error on login: $e"
-        return false
-    }
-    
-    clearCredentialsIfNeeded()
-    
+
     return success
 }
 
@@ -235,6 +330,13 @@ def clearCredentialsIfNeeded()
         app.removeSetting("username")
         app.removeSetting("password")
     }
+}
+
+def refreshCredentials()
+{
+    // Credentials should be valid, so if they suddenly become invalid,
+    // stop trying to reuse them.
+    doLogin(true)
 }
 
 def getLocations()
@@ -379,7 +481,7 @@ def createFireplace(fireplace)
         device.setSerial(fireplace.serial)
         device.configure()
 
-        if (settings.createLightDevices && fireplace.hasLight)
+        if (fireplace.hasLight)
         {
             device.createVirtualLightDevice(overrideHasLight: true)
         }
@@ -409,6 +511,26 @@ void gatherCookies(response)
         String cookie = it.value.split(';')[0]
         def cookieParts = cookie.split('=')
 
+        // Code saved in case we ever need to deal with expiring cookies.
+        // Currently, they don't expire until end of session.
+
+        // try {
+        //     def cookieSegments = it.value.split(';')
+        //     for (int i = 1; i < cookieSegments.length; i++) {
+        //         def cookieSegment = cookieSegments[i]
+        //         String cookieSegmentName = cookieSegment.split('=')[0]
+
+        //         if (cookieSegmentName.trim() == "expires") {
+        //             String expiration = cookieSegment.split('=')[1] 
+
+        //             expires = new Date(expiration)
+        //         } 
+        //     }
+        // }
+        // catch (e) {
+        //     log.info "!error when checking expiration date: $e ($expiration) {$it.value}"
+        // }
+
         if (cookieParts[1].trim() != "")
         {
             //logDebug "Adding cookie to collection: \"${cookieParts[0]} = ${cookieParts[1]}\""
@@ -421,6 +543,25 @@ String makeCookiesString()
 {
     String cookiesString = ""
 
+    // Track expired cookies to remove, since we can't remove while iterating.
+    // 06/19/2022 - Running a Map removeAll() call first to remove expired cookies would be cleaner, except that
+    // it requires Groovy version 2.5.0, and Hubitat is currently on 2.4.21.  :(
+    // def expiredCookies = []
+    // def now = new Date();
+
+    // state.sessionCookies.each{ entry ->
+    //     if (entry.value.containsKey(expiration) && entry.value.expiration < now)
+    //     {
+    //         expiredCookies << entry.key
+    //     }
+    //     else
+    //     {
+    //         cookiesString = cookiesString + entry.key + '=' + entry.value.value + ';'
+    //     }
+    // }
+
+    // expiredCookies.each{ entry -> state.sessionCookies.remove(entry) }
+    
     state.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
 
     //logDebug "cookiesString: $cookiesString"
