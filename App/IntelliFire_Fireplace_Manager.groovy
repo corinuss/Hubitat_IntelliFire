@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.
  *    09/25/2023 v0.6.0   - Save (and forget) website credentials
@@ -222,7 +223,7 @@ def fireplacesPage(params)
         }
 
         section("Local or Cloud Control?")
-        {            
+        {
             paragraph "Local control does not require an internet connection once the fireplace is configured, but can sometimes lock up the wifi module, requiring a power cycle."
             paragraph "Cloud control also reacts to status updates immediately, allowing the Hubitat device to stay more in sync with the mobile app and physical remote."
             paragraph "Cloud control is recommended.  You can change this later on device settings."
@@ -309,15 +310,23 @@ Boolean doLogin(clearCredentialsIfInvalid = false)
             {
                 log.error "Error on login: $e"
             }
-            return false
+            success = false
         }
         catch (e)
         {
             log.error "Error on login: $e"
-            return false
+            success = false
         }
-        
-        clearCredentialsIfNeeded()
+
+        getChildDevices()?.each
+        {
+            it.notifyLoginChange(success, state.loginUniqueId)
+        }
+
+        if (success)
+        {
+            clearCredentialsIfNeeded()
+        }
     }
 
     return success
@@ -427,22 +436,8 @@ def getFireplaceInfo(fireplaceSerial)
             }
             else
             {
-                fireplace.ipAddress = resp.data.ipv4_address
+                fireplace.data = resp.data
 
-                if (resp.data.containsKey("feature_thermostat"))
-                {
-                    logDebug "feature_thermostat ${resp.data.feature_thermostat}"
-                }
-                fireplace.hasThermostat = (resp.data.containsKey("feature_thermostat") && resp.data.feature_thermostat == "1")
-                logDebug "fireplace.hasThermostat ${fireplace.hasThermostat}"
-
-                if (resp.data.containsKey("feature_light"))
-                {
-                    logDebug "feature_light ${resp.data.feature_light}"
-                }
-                fireplace.hasLight = (resp.data.containsKey("feature_light") && resp.data.feature_light == "1")
-                logDebug "fireplace.hasLight ${fireplace.hasLight}"
-                
                 createFireplace(fireplace)
             }
         }
@@ -474,16 +469,20 @@ def createFireplace(fireplace)
         }
 
         // Apply settings to device
-        device.updateSetting("ipAddress", fireplace.ipAddress)
+        def hasThermostat = (fireplace.data.containsKey("feature_thermostat") && fireplace.data.feature_thermostat == "1")
+
+        device.updateSetting("ipAddress", fireplace.ipv4_address)
         device.updateSetting("apiKey", fireplace.apiKey)
         device.updateSetting("userId", userId)
-        device.updateSetting("thermostatOnDefault", fireplace.hasThermostat)
-        device.setSerial(fireplace.serial)
+        device.updateSetting("thermostatOnDefault", hasThermostat)
+        device.updateSetting("enableCloudControl", settings.enableCloudControl)
+        device.consumeStatus(fireplace.data)
+        device.notifyLoginChange(settings.saveCredentials, getCurrentLoginId(), true)
         device.configure()
 
-        if (fireplace.hasLight)
+        if (fireplace.data.containsKey("feature_light") && fireplace.data.feature_light == "1")
         {
-            device.createVirtualLightDevice(overrideHasLight: true)
+            device.createVirtualLightDevice()
         }
 
         // Report result string
@@ -539,8 +538,18 @@ void gatherCookies(response)
     }
 }
 
-String makeCookiesString()
+def getCurrentLoginId()
 {
+    return state.loginUniqueId :? 0
+}
+
+String makeCookiesString(loginUniqueId = null)
+{
+    if (loginUniqueId != null && state.loginUniqueId != loginUniqueId)
+    {
+        return null
+    }
+
     String cookiesString = ""
 
     // Track expired cookies to remove, since we can't remove while iterating.

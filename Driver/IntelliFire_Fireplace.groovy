@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
  *                          Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
@@ -67,11 +68,11 @@ metadata
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
         command 'setLevel', [[name: "Flame height percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Flame Height values [0-4].  Used by SwitchLevel capability."]]
         //command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
-        command 'setOnOff', [[name: "On/Off", type:"ENUM", description:"Turn the fireplace on or off. (Same effect as the separate 'on' and 'off' buttons.)", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setPilotLight', [[name: "Cold Climate pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
         command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
         command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setThermostatMode', [[name: "Mode", type:"ENUM", description:"(Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'softReset'
 
@@ -84,7 +85,7 @@ metadata
         attribute "pilot", "number"
         attribute "power", "number"
         attribute "thermostat", "number"
-        attribute "thermostatMode", "enum", ["heat", "off"] // supported modes
+        attribute "thermostatMode", "enum", ThermostatMode // supported modes
         attribute "timer", "number"
     }
     
@@ -108,9 +109,9 @@ void logDebug (msg)
     }
 }
 
-//
-// INIT
-//
+//================
+// INITIALIZATION
+//================
 void installed()
 {
     configure()
@@ -179,6 +180,7 @@ void updateCloudControl()
         if (state.isUsingCloud)
         {
             unschedule("refresh")
+            state.loginChanged = false
             cloudPoll()
             runEvery1Minute("cloudLongPollMonitor")
         }
@@ -190,30 +192,33 @@ void updateCloudControl()
     }
 }
 
-void notifyLoginChange(loginUniqueId)
+void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
 {
-    // TODO - Figure out how to do this correctly.
-    // Scenarios:
-    // * Everything is running well, and login has changed.
-    //  * If we do nothing, it'll fix itself on the next refresh.
-    // * Polling has stopped because credentials were bad.
-    //  * Restart polling by calling cloudPoll().
-    // * Polling has stopped unexpectedly.  Monitor hasn't started it yet.
-    //  * Restart polling by calling cloudPoll().  Make sure monitor doesn't duplicate efforts.  synchronization?
-    //
-    // Other questions
-    // Do we need to save off the uniqueLoginId before starting an async cycle?  If we assume only one polling at a time,
-    // can we signal it's been interrupted?
-    // How do we prevent a race condition between the monitor and this?
-    if (state.isUsingCloud)
+    synchronized(this)
     {
-        cloudPoll()
+        def wasLoggedIn = state.isLoggedIn
+        state.isLoggedIn = isLoggedIn
+        if (state.isUsingCloud && !initialization)
+        {
+            logdebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedin -> $isLoggedIn)"
+
+            if (isLogged && !wasLoggedIn)
+            {
+                log.info "Restarting cloud polling since we've signed back in."
+                cloudPoll()
+            }
+            else
+            {
+                // Used to trigger a restart of the async loop.
+                state.loginChanged = true
+            }
+        }
     }
 }
 
-//
+//===================
 // REFRESH (POLLING)
-//
+//===================
 void refresh(forceSchedule = false)
 {
     if (!state.isUsingCloud)
@@ -257,49 +262,87 @@ void localPoll(forceSchedule = false)
 
 void cloudPoll()
 {
-    // TODO - If login credentials are bad, stop?
-    def loginUniqueId = parent.getCurrentLoginId()
-    state.cloudPollTimestamp = getTime()
-    httpGet([
-            uri: "${parent.getRemoteServerRoot()}/$serial/apppoll",
-            headers: [ 'Cookie': parent.makeCookiesString(loginUniqueId) ],
-        ])
-    { resp ->
-        logDebug "apppoll Status ${resp.getStatus()}"
-        consumeStatus(resp.data)
+    // TODO - Should we save off an incrementing value and use that to determine whether we need to kill a loop, in case a new loop is started?
+    def success = true
+
+    if (!state.isLoggedIn)
+    {
+        logDebug "Aborting cloudPoll since we aren't logged in."
     }
 
-    cloudLongPollStart(loginUniqueId)
+    logdebug "Poll Start"
+    state.cloudPollTimestamp = getTime()
+    state.loginChanged = false
+
+    def cookies = parent.makeCookiesString()
+
+    try
+    {
+        httpGet([
+                uri: "${parent.getRemoteServerRoot()}/$serial/apppoll",
+                headers: [ 'Cookie': cookies ],
+            ])
+        { resp ->
+            logDebug "apppoll Status ${resp.getStatus()}"
+            consumeStatus(resp.data)
+        }
+    }
+    catch (HttpResponseException e)
+    {
+        def statusCode = e.getStatusCode()
+
+        if (statusCode == 403)
+        {
+            log.error "Failed while issuing poll command due to invalid credentials."
+            if (parent.refreshCredentials())
+            {
+                // If we successfully signed back in, try again.
+                state.loginChanged = false
+                cloudPoll()  
+            }
+        }
+        else
+        {
+            log.error "Failed while issuing poll command: Response $statusCode"
+        }
+
+        success = false
+    }
+
+    cloudLongPollStart(cookies)
 }
 
-void cloudLongPollStart(loginUniqueId)
+void cloudLongPollStart(cookies)
 {
     if (state.cloudLongPollActive)
     {
-        log.warning "There is a cloud long poll currently in progress.  Not starting another long poll."
+        log.error "There is a cloud long poll currently in progress.  Not starting another long poll."
         return
     }
 
-    def serial = state.serial
-    def cookies = parent.makeCookiesString(loginUniqueId)
-    if (cookies == null)
+    if (state.loginChanged)
     {
-        // Login credentials have changed or are no longer valid.  Try a normal poll again.
-        cloudPoll()
+        if (state.loggedIn)
+        {
+            // Login credentials have changed or are no longer valid.  Try a normal poll again.
+            cloudPoll()
+        }
+
+        return
     }
-    else
-    {
-        state.cloudLongPollActive = true
-        state.cloudPollTimestamp = getTime()
-        asynchttpGet(
-            longPollResult,
-            [
-                uri: "${parent.getRemoteServerRoot()}/$serial/applongpoll",
-                headers: [ 'Cookie': parent.makeCookiesString(loginUniqueId) ],
-                timeout: 63
-            ],
-            [ loginUniqueId: loginUniqueId ])
-    }
+
+    logdebug "Long Poll Start"
+    state.cloudLongPollActive = true
+    state.cloudPollTimestamp = getTime()
+
+    asynchttpGet(
+        longPollResult,
+        [
+            uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
+            headers: [ 'Cookie': cookies ],
+            timeout: 63
+        ],
+        [ cookies: cookies ])
 }
 
 void cloudLongPollResult(data)
@@ -329,10 +372,10 @@ void cloudLongPollResult(data)
     // Check to see if we've switched to local polling before sending another request.
     updateCloudControl()
 
-    if (state.isUsingCloud)
+    if (state.isUsingCloud && state.isLoggedIn)
     {
         def isExpectedResponse = false
-        def outgoingHeaders = [ 'Cookie': parent.makeCookiesString(data[loginUniqueId]) ]
+        def outgoingHeaders = [ 'Cookie': data[cookies] ]
 
         if (resp.getStatus() == 200 || resp.getStatus() == 408)
         {
@@ -354,11 +397,11 @@ void cloudLongPollResult(data)
             }
         }
 
-        def cookies = parent.makeCookiesString(loginUniqueId)
-        if (isExpectedResponse && cookies != null)
+        if (isExpectedResponse || state.loginChanged)
         {
             def serial = state.serial
 
+            logdebug "Long Poll Continue"
             state.cloudLongPollActive = true
             state.cloudPollTimestamp = getTime()
             asynchttpGet(
@@ -367,13 +410,14 @@ void cloudLongPollResult(data)
                     uri: "${parent.getRemoteServerRoot()}/$serial/applongpoll",
                     headers: outgoingHeaders,
                     timeout: 63
-                ])
+                ],
+                data)
         }
         else
         {
             if (!isExpectedResponse)
             {
-                log.warning "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll."
+                log.warn "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll."
             }
 
             def retryDelayMilliseconds = 60000 - (getTime() - state.cloudPollTimestamp)
@@ -391,18 +435,22 @@ void cloudLongPollResult(data)
 
 void cloudLongPollMonitor()
 {
-    if (state.isUsingCloud && parent.makeCookiesString() != null)
+    synchronized(this)
     {
-        // If we haven't had a successfull long poll for a while,
-        // do a full poll reset.
-        def currentTime = getTime()
-
-        if (state.cloudPollTimestamp + 180000 < currentTime)
+        if (state.isUsingCloud && state.isLoggedIn)
         {
-            log.warning "Cloud long polling appears to have stalled.  cloudLongPollActive(${state.cloudLongPollActive}). Restarting..."
+            // If we haven't had a successfull long poll for a while,
+            // do a full poll reset.
+            def currentTime = getTime()
 
-            state.cloudLongPollActive = false
-            cloudPoll()
+            if (state.cloudPollTimestamp + 180000 < currentTime)
+            {
+                log.warn "Cloud long polling appears to have stalled.  cloudLongPollActive(${state.cloudLongPollActive}). Restarting..."
+
+                state.cloudLongPollActive = false
+
+                cloudPoll()
+            }
         }
     }
 }
@@ -502,17 +550,12 @@ void consumeStatus(statusMap)
                 }
 
                 // Notify any child devices implementing Light control
-                try
+                getChildDevices()?.each
                 {
-                    getChildDevices()?.each
+                    if (it.hasCapability("Light"))
                     {
-                        if (it.hasCapability("Light"))
-                        {
-                            it.setLightLevelFromParent(value)
-                        }
+                        it.setLightLevelFromParent(value)
                     }
-                } catch (err) {
-                    logDebug "Either no children exist or error finding child devices for some reason: ${err}"
                 }
                 break
 
@@ -571,9 +614,9 @@ void consumeStatus(statusMap)
     sendEvent(name: "thermostatMode", value: switchStatus ? "heat" : "off")
 }
 
-//
+//===========
 // FAN SPEED
-//
+//===========
 
 // Google Home Community
 void setSpeedPercentage(fanspeedPercentage)
@@ -641,9 +684,9 @@ void cycleSpeed()
     setSpeedInternal(newFanspeed)
 }
 
-//
+//========
 // SWITCH
-//
+//========
 
 // Switch
 void on()
@@ -674,19 +717,24 @@ void off()
     sendCommand("POWER", 0)
 }
 
-//
+//====================
 // THERMOSTAT CONTROL
-//
-void setThermostatMode(thermostatmode)
+//====================
+def setThermostatMode(thermostatmode)
 {
     if (thermostatmode == "heat")
     {
-        on()
+        heat()
     }
     else
     {
         off()
     }
+}
+
+def heat()
+{
+    on()
 }
 
 // ThermostatHeatingSetpoint
@@ -713,9 +761,9 @@ void setThermostatControl(enabled)
     sendCommand("THERMOSTAT_SETPOINT", setPointValue)
 }
 
-//
+//=======
 // LIGHT
-//
+//=======
 void createVirtualLightDevice(overrideHasLight = false)
 {
     if (!overrideHasLight && state.hasLight != 1)
@@ -740,15 +788,13 @@ void createVirtualLightDevice(overrideHasLight = false)
         def childLabel = "$myLabel Light"
 
         log.info "Creating new Light child device $childLabel"
-        addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
+        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
+        childDevice.setLightLevelFromParent(device.currentValue("light"))
     }
     else
     {
         log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
     }
-
-    // Refresh to allow the new device to get current status.
-    refresh()
 }
 
 void lightOn()
@@ -770,9 +816,9 @@ void lightOff()
     setLightLevel(0)
 }
 
-//
+//================
 // OTHER COMMANDS
-//
+//================
 
 // SwitchLevel (via Light virtual device)
 void setLightLevel(level)
@@ -825,9 +871,9 @@ void softReset()
     sendCommand("SOFT_RESET", 1)
 }
 
-//
-// UTILITY
-//
+//===========
+// UTILITIES
+//===========
 int convertCelsiusToUserTemperature(celsiusTemperature)
 {
     if (getTemperatureScale() == "F")
@@ -854,9 +900,9 @@ int convertUserTemperatureToCelsius(userTemperature)
     }
 }
 
-//
+//==============
 // SEND COMMAND
-//
+//==============
 def sendCommand(command, value)
 {
     if (state.isUsingCloud)
@@ -935,9 +981,14 @@ def getChallenge()
     return challenge
 }
 
-def sendCloudCommand(command, value, isRetry = false)
+def sendCloudCommand(command, value)
 {
-    // TODO - Abort if not signed in.
+    if (!state.isLoggedIn)
+    {
+        logDebug "Aborting cloud command $command since we aren't logged in."
+        return false
+    }
+
     def success= false
     def commandSpec = INTELLIFIRE_COMMANDS[command]
     def serial = state.serial
@@ -972,11 +1023,10 @@ def sendCloudCommand(command, value, isRetry = false)
         if (statusCode == 403)
         {
             log.error "Failed while issuing command '${commandSpec.cloudCommand}' due to invalid credentials.  Attempting to refresh."
-            parent.refreshCredentials()
-
-            if (!isRetry)
+            
+            if (parent.refreshCredentials())
             {                
-                sendCloudCommand(command, value, true)
+                sendCloudCommand(command, value)
             }
         }
         else
@@ -995,9 +1045,9 @@ def sendCloudCommand(command, value, isRetry = false)
     return success
 }
 
-//
+//==================
 // GLOBAL CONSTANTS
-//
+//==================
 
 // Subset of officially supported FanControl speed names.
 @Field FanControlSpeed =
@@ -1013,6 +1063,12 @@ def sendCloudCommand(command, value, isRetry = false)
 [
     "off": 0,
     "on": 1
+]
+
+@Field ThermostatMode =
+[
+    "off",
+    "heat"
 ]
 
 @Field
@@ -1075,7 +1131,7 @@ private static final INTELLIFIRE_COMMANDS =
         max: 10800
     ],  // multiples of 60 - 0 = disable
     "SOFT_RESET":
-    [  // This can be used to "soft reset the unit" -> probably dont ever need it.
+    [  // This can be used to "soft reset the unit"
         cloudCommand: "soft_reset",
         localCommand: "reset",  // Unaware of the local command for this one here
         min: 1,
@@ -1114,5 +1170,5 @@ private static final ERROR_MESSAGES =
     "ACCESSORY":     "Your appliance has detected that an AUX port or accessory is not functional. Please contact your dealer and report this issue.",
     "SOFT_LOCK_OUT": "Sorry your appliance did not start. Try again by pressing Flame ON.",
     "OFFLINE":       "Your appliance is currently offline.",
-    "ECM_OFFLINE":   "ECM is offline.",
+    "ECM_OFFLINE":   "ECM is offline.  You may need to power cycle your WiFi module.",
 ].withDefault { otherError -> "Unknown Error. ($otherError)" }

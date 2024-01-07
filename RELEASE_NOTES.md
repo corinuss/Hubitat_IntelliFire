@@ -3,36 +3,38 @@ This doc will contain a record of significant changes to this package.  Minor ve
 
 ## 2.0.0
 
-### Breaking Changes Summary
+### Breaking Changes 
 The Hubitat Intellifire interface has gotten a bit messy as features have been added.  Some commands are now redunant.  Some attributes shouldn't be attributes, or follow different naming conventions, etc.  So since breaking changes are allowed during major update, this update fixes some of these issues.  Except for a couple cases, users shouldn't be affected by these changes unless they are trying to be power users
-Detailed descriptions of all breaking changes are documented near the end of this version update.
-
 
 #### Removed commands
-* Light commands have been removed from the main Fireplace driver to reduce button clutter.  You should use the Fireplace Light child device to control the Lights (and it's better supported by Hubitat).  If it doesn't exist, you can create it with the createVirtualLightDevice button.
-  * lightOn
-  * lightOff
-  * setLightLevel
-* This command has been renamed to better align the ThermostatMode capability (though that capability has not been added due to button clutter).  If you use Google Home Community to control this fireplace, update these settings.
-  * setOnOff -> Renamed to setThermostatMode and now supports parameters ["off", "heat"]
+Light commands have been removed from the main Fireplace driver to reduce button clutter.  You must use the Fireplace Light child device to control the Lights (and it's better supported by Hubitat).  If it doesn't exist, you can create it with the createVirtualLightDevice button.
+* lightOn
+* lightOff
+* setLightLevel
+
+This command has been renamed to better align the ThermostatMode capability (though that capability has not been added due to button clutter).  If you use Google Home Community to control this fireplace, update these settings.
+* setOnOff -> Renamed to setThermostatMode and now supports parameters ["off", "heat"]
 
 #### Removed attributes
 Attributes have been removed to reduce state clutter
-* These have been renamed.  Update any rules that use these values.
-  * fanspeedpercent -> fanspeedPercent
-* These have been moved to internal state tracking.
-  * fanspeedLast
-  * feature_light
-  * lightLast
-  * serial
-  * setpoint
-  * setpointLast
-* These have been removed completely due to not being useful.
-  * temperatureRaw
-  * timeremaining
+
+These have been renamed.  Update any rules that use these values.
+* fanspeedpercent -> fanspeedPercent
+
+These have been moved to internal state tracking.
+* fanspeedLast
+* feature_light
+* lightLast
+* serial
+* setpoint
+* setpointLast
+
+These have been removed completely due to not being useful.
+* temperatureRaw
+* timeremaining
 
 ### Cloud Control Support
-TODO
+You now have the option to control the fireplace via cloud commands if you store your credentials in the Intellifire Manager App.  There is a setting on the Fireplace to change between local and cloud control.
 
 #### Soft Reset
 New command that will attempt a reset of your module if it is having issues.  This can sometimes fix the fireplace without a manual power cycle.
