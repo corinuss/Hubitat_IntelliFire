@@ -45,6 +45,7 @@
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 import java.security.MessageDigest
+import org.apache.http.client.HttpResponseException
 
 metadata
 {
@@ -80,10 +81,12 @@ metadata
         attribute "fanspeed", "number"
         attribute "fanspeedPercent", "number"
         attribute "height", "number"
+        attribute "hot", "number"
         attribute "level", "number"
         attribute "light", "number"
         attribute "pilot", "number"
         attribute "power", "number"
+        attribute "prepurge", "number"
         attribute "thermostat", "number"
         attribute "thermostatMode", "enum", ThermostatMode // supported modes
         attribute "timer", "number"
@@ -94,9 +97,9 @@ metadata
         input name: "ipAddress", type: "text", title: "Local IP Address", required: true
         input name: "apiKey", type: "text", title: "API Key", description: "Find this on IntelliFire's servers", required: true
         input name: "userId", type: "text", title: "User ID", description: "Find this on IntelliFire's servers", required: true
+        input name: "enableCloudControl", type: "bool", title: "Issue commands via online cloud API?", defaultValue: false
         input name: "thermostatOnDefault", type: "bool", title: "When turning on the fireplace, should the thermostat be enabled by default?", defaultValue: false
         input name: "shouldRestoreFanSpeed", type: "bool", title: "When turning on the fireplace, should we ensure the fan speed is restored to its last value?", defaultValue: false
-        input name: "enableCloudControl", type: "bool", title: "Issue commands via online cloud API?", defaultValue: false
         input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", defaultValue: false
     }
 }
@@ -117,6 +120,12 @@ void installed()
     configure()
 }
 
+// TODO Stop monitor on uninstall?
+void uninstalled()
+{
+    unschedule("cloudLongPollMonitor")
+}
+
 void configure()
 {
     cleanupDeprecatedSettings()
@@ -135,37 +144,19 @@ void cleanupDeprecatedSettings()
     // Removed in 2.0.0
     device.deleteCurrentState('fanspeedpercent')
     device.deleteCurrentState('feature_light')
+    device.deleteCurrentState('fanspeedLast')
+    device.deleteCurrentState('lightLast')
+    device.deleteCurrentState('serial')
     device.deleteCurrentState('setpoint')
+    device.deleteCurrentState('setpointLast')
     device.deleteCurrentState('temperatureRaw')
     device.deleteCurrentState('timeremaining')
-
-    if (device.hasAttribute('fanspeedLast'))
-    {
-        state.fanspeedLast = device.getCurrentState('fanspeedLast')
-        device.deleteCurrentState('fanspeedLast')
-    }
-
-    if (device.hasAttribute('lightLast'))
-    {
-        state.lightLast = device.getCurrentState('lightLast')
-        device.deleteCurrentState('lightLast')
-    }
-
-    if (device.hasAttribute('setpointLast'))
-    {
-        state.setpointLast = device.getCurrentState('setpointLast')
-        device.deleteCurrentState('setpointLast')
-    }
-
-    if (device.hasAttribute('serial'))
-    {
-        state.serial = device.getCurrentState('serial')
-        device.deleteCurrentState('serial')
-    }
 }
 
 void setSerial(serial)
 {
+    // TODO - If serial isn't set try a local poll?
+    
     // Pre-populate the serial number if it was provided to us.
     // Guarantees we have it in case the fireplace isn't available during initialization from the Manager app.
     state.serial = serial
@@ -200,7 +191,7 @@ void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
         state.isLoggedIn = isLoggedIn
         if (state.isUsingCloud && !initialization)
         {
-            logdebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedin -> $isLoggedIn)"
+            logDebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedin -> $isLoggedIn)"
 
             if (isLogged && !wasLoggedIn)
             {
@@ -223,13 +214,13 @@ void refresh(forceSchedule = false)
 {
     if (!state.isUsingCloud)
     {
-        return localPoll()
+        localPoll()
     }
 }
 
 void localPoll(forceSchedule = false)
 {
-    def previousSwitchStatus = device.currentValue("switch")
+    // def previousSwitchStatus = device.currentValue("switch")
 
     // Update current state from fireplace.
     log.info "Refreshing status..."
@@ -238,24 +229,24 @@ void localPoll(forceSchedule = false)
         httpGet("http://${settings.ipAddress}/poll")
         { resp ->
             logDebug "Status ${resp.getStatus()}"
-            consumeStatus(resp.data)
+            consumeStatus(parseJson(resp.data.text))
         }
     }
 
-    def switchStatus = device.currentValue("switch", true)
-    if (switchStatus != previousSwitchStatus || forceSchedule)
-    {
-        if (switchStatus == "on")
-        {
-            log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
-            runEvery5Minutes("refresh")
-        }
-        else
-        {
-            log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
-            runEvery15Minutes("refresh")
-        }
-    }
+    // def switchStatus = device.currentValue("switch", true)
+    // if (switchStatus != previousSwitchStatus || forceSchedule)
+    // {
+    //     if (switchStatus == "on")
+    //     {
+    //         log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
+    //         runEvery5Minutes("refresh")
+    //     }
+    //     else
+    //     {
+    //         log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
+    //         runEvery15Minutes("refresh")
+    //     }
+    // }
 
     updateCloudControl()
 }
@@ -265,22 +256,33 @@ void cloudPoll()
     // TODO - Should we save off an incrementing value and use that to determine whether we need to kill a loop, in case a new loop is started?
     def success = true
 
+    updateCloudControl()
+    if (!state.isUsingCloud)
+    {
+        logDebug "Aborting cloudPoll since we're switching to local control."
+        return
+    }
+
     if (!state.isLoggedIn)
     {
         logDebug "Aborting cloudPoll since we aren't logged in."
     }
 
-    logdebug "Poll Start"
-    state.cloudPollTimestamp = getTime()
+    logDebug "Poll Start"
+    state.cloudPollTimestamp = now()
     state.loginChanged = false
 
     def cookies = parent.makeCookiesString()
 
     try
     {
+        def uri = "${parent.getRemoteServerRoot()}/${state.serial}/apppoll"
+        def headers = [ 'Cookie': cookies ]
+        logDebug "uri: $uri     headers: $headers"
+
         httpGet([
-                uri: "${parent.getRemoteServerRoot()}/$serial/apppoll",
-                headers: [ 'Cookie': cookies ],
+                uri: uri,
+                headers: headers,
             ])
         { resp ->
             logDebug "apppoll Status ${resp.getStatus()}"
@@ -290,6 +292,7 @@ void cloudPoll()
     catch (HttpResponseException e)
     {
         def statusCode = e.getStatusCode()
+        logDebug "apppoll Status $statusCode"
 
         if (statusCode == 403)
         {
@@ -309,7 +312,10 @@ void cloudPoll()
         success = false
     }
 
-    cloudLongPollStart(cookies)
+    if (success)
+    {
+        cloudLongPollStart(cookies)
+    }
 }
 
 void cloudLongPollStart(cookies)
@@ -331,21 +337,21 @@ void cloudLongPollStart(cookies)
         return
     }
 
-    logdebug "Long Poll Start"
+    logDebug "Long Poll Start"
     state.cloudLongPollActive = true
-    state.cloudPollTimestamp = getTime()
+    state.cloudPollTimestamp = now()
 
     asynchttpGet(
-        longPollResult,
+        cloudLongPollResult,
         [
             uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
             headers: [ 'Cookie': cookies ],
             timeout: 63
         ],
-        [ cookies: cookies ])
+        [ 'cookies': cookies ])
 }
 
-void cloudLongPollResult(data)
+void cloudLongPollResult(resp, data)
 {
     // Common ways this function ends:
     // * Data changed
@@ -366,7 +372,7 @@ void cloudLongPollResult(data)
 
     if (resp.getStatus() == 200)
     {
-        consumeStatus(resp.data)
+        consumeStatus(parseJson(resp.data))
     }
 
     // Check to see if we've switched to local polling before sending another request.
@@ -375,7 +381,7 @@ void cloudLongPollResult(data)
     if (state.isUsingCloud && state.isLoggedIn)
     {
         def isExpectedResponse = false
-        def outgoingHeaders = [ 'Cookie': data[cookies] ]
+        def outgoingHeaders = [ 'Cookie': data['cookies'] ]
 
         if (resp.getStatus() == 200 || resp.getStatus() == 408)
         {
@@ -399,15 +405,13 @@ void cloudLongPollResult(data)
 
         if (isExpectedResponse || state.loginChanged)
         {
-            def serial = state.serial
-
-            logdebug "Long Poll Continue"
+            logDebug "Long Poll Continue"
             state.cloudLongPollActive = true
-            state.cloudPollTimestamp = getTime()
+            state.cloudPollTimestamp = now()
             asynchttpGet(
-                longPollResult,
+                cloudLongPollResult,
                 [
-                    uri: "${parent.getRemoteServerRoot()}/$serial/applongpoll",
+                    uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
                     headers: outgoingHeaders,
                     timeout: 63
                 ],
@@ -420,7 +424,7 @@ void cloudLongPollResult(data)
                 log.warn "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll."
             }
 
-            def retryDelayMilliseconds = 60000 - (getTime() - state.cloudPollTimestamp)
+            def retryDelayMilliseconds = 60000 - (now() - state.cloudPollTimestamp)
             if (retryDelayMilliseconds > 0)
             {
                 runInMillis(retryDelayMilliseconds, "cloudPoll")
@@ -437,13 +441,14 @@ void cloudLongPollMonitor()
 {
     synchronized(this)
     {
+        logDebug "cloudLongPollMonitor checking..."
         if (state.isUsingCloud && state.isLoggedIn)
         {
             // If we haven't had a successfull long poll for a while,
             // do a full poll reset.
-            def currentTime = getTime()
+            def currentTime = now()
 
-            if (state.cloudPollTimestamp + 180000 < currentTime)
+            if (state.cloudPollTimestamp + 120000 < currentTime)
             {
                 log.warn "Cloud long polling appears to have stalled.  cloudLongPollActive(${state.cloudLongPollActive}). Restarting..."
 
@@ -467,54 +472,61 @@ void consumeStatus(statusMap)
     statusMap.each
     { param, value ->
         //logDebug "Processing $param = $value"
+
+        // During local polling, most values are integers.  But during cloud polling, these are strings.
+        // Integers are more useful to us, so try to provide an integer version of all data, for the
+        // params that need it.
+        int valueInt = -1
+        try { valueInt = value.toInteger() } catch (e) {}
+        
         switch (param) {
             case "temperature":
                 // Thermostat data sometimes cuts out, so only send temperature events if the data is valid...
                 if (statusMap.get("feature_thermostat", 0) != 0)
                 {
                     // TemperatureMeasurement
-                    sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(value), unit: "°${getTemperatureScale()}")
+                    sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(valueInt), unit: "°${getTemperatureScale()}", descriptionText: "Room temperature")
                 }
                 break
 
             case "fanspeed":
-                sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                sendEvent(name: param, value: valueInt, descriptionText: "Fan speed")
 
                 // FanControl
-                sendEvent(name: "speed", value: FanControlSpeed[value])
+                sendEvent(name: "speed", value: FanControlSpeed[valueInt], descriptionText: "Fan speed")
 
                 // Google Fan Speed Percentages
-                sendEvent(name: "fanspeedPercent", value: value*25, unit: "%", descriptionText: "Fan speed")
+                sendEvent(name: "fanspeedPercent", value: valueInt*25, unit: "%", descriptionText: "Fan speed")
 
-                if (value != 0)
+                if (valueInt != 0)
                 {
                     // Save off the currently set fan speed, but only if non-zero.
                     // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
-                    state.fanspeedLast = value
+                    state.fanspeedLast = valueInt
                 }
                 break
 
             case "setpoint":
                 // This is actually celsius * 100...
-                if (value != 0)
+                if (valueInt != 0)
                 {
                     // Only update these events if we have a valid setpoint.  The app turns off the thermostat by setting it to 0, but
                     // we'll try to restore the previous setpoint automatically.
-                    state.setpointLast = value
+                    state.setpointLast = valueInt
 
                     // ThermostatHeatingSetpoint
-                    sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(value/100), unit: "°${getTemperatureScale()}")
+                    sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
 
                     // ThermostatSetpoint
-                    sendEvent(name: "thermostatSetpoint", value: convertCelsiusToUserTemperature(value/100), unit: "°${getTemperatureScale()}")
+                    sendEvent(name: "thermostatSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
                 }
                 break
                 
             case "height":
-                sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                sendEvent(name: param, value: valueInt, descriptionText: "Flame height")
 
                 // SwitchLevel
-                sendEvent(name: "level", value: value*25, unit: "%", descriptionText: "Flame height")
+                sendEvent(name: "level", value: valueInt*25, unit: "%", descriptionText: "Flame height")
                 break
 
             case "errors":
@@ -529,24 +541,24 @@ void consumeStatus(statusMap)
 
             // Flame is on
             case "power":
-                powerStatus = value
-                sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                powerStatus = valueInt
+                sendEvent(name: param, value: valueInt, descriptionText: "Flame is ignited")
                 break;
 
             // Thermostat is controlling flame power
             case "thermostat":
-                thermostatStatus = value
-                sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                thermostatStatus = valueInt
+                sendEvent(name: param, value: valueInt, descriptionText: "Thermostat is active")
                 break;
 
             case "light":
-                sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                sendEvent(name: param, value: valueInt, descriptionText: "Light is on")
 
-                if (value != 0)
+                if (valueInt != 0)
                 {
                     // Only save the light value if it's not off.  Used to restore the light when
                     // issued a simple "lightOn" request.
-                    state.lightLast = value
+                    state.lightLast = valueInt
                 }
 
                 // Notify any child devices implementing Light control
@@ -554,22 +566,22 @@ void consumeStatus(statusMap)
                 {
                     if (it.hasCapability("Light"))
                     {
-                        it.setLightLevelFromParent(value)
+                        it.setLightLevelFromParent(valueInt)
                     }
                 }
                 break
 
             case "ipv4_address":
-                if (settings.ipAddress != value)
+                if ((settings.ipAddress ?: "") != value)
                 {
                     log.info "Updating ipAddress to $value"
-                    settings.ipAddress = value
+                    device.updateSetting("ipAddress", value)
                 }
                 break
 
             // Device unique serial (used for identification)
             case "serial":
-                if (state.serial != value)
+                if ((state.serial ?: "") != value)
                 {
                     state.serial = value
                 }
@@ -577,27 +589,55 @@ void consumeStatus(statusMap)
 
             // Does this fireplace have a light?
             case "feature_light":
-                state.hasLight = (value != 0)
+                state.hasLight = (valueInt != 0)
+                break
+
+            case "pilot":
+                sendEvent(name: param, value: valueInt, descriptionText: "Cold Climate pilot light enabled")
+                break
+
+            case "prepurge":
+                sendEvent(name: param, value: valueInt, descriptionText: "2-minute pre-purge before flame ignites (Power Vent only)")
+                break
+
+            case "hot":
+                sendEvent(name: param, value: valueInt, descriptionText: "Flame is off, but fan is running to cool the unit")
+                break
+
+            case "timer":
+                sendEvent(name: param, value: valueInt, descriptionText: "Timer is active")
                 break
 
             // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
-            case "pilot":                   // Cold-weather pilot light is enabled
-            case "timer":                   // Timer is activated
-            //case "timeremaining":         // Seconds until timer turns off fireplace (doesn't get updated frequently enough)
-            //case "name":                  // Blank on my fireplace
-            //case "battery":               // Emergency battery level (USB-C connection)
-            //case "feature_thermostat":    // Does this fireplace have a thermostat and temperature data?
-            //case "power_vent":            // Does this fireplace have a power vent?
-            //case "feature_fan":           // Does this fireplace have a fan?
-            //case "fw_version":            // Numeric firmware version (not useful)
-            //case "fw_ver_string":         // String firmware version
-            //case "downtime":              // unknown
-            //case "uptime":                // Time fireplace has been on internet
-            //case "connection_quality":    // Connection quality of thermostat remote
-            //case "ecm_latency":           // unknown
-            //case "ipv4_address":          // We already know this.  Can't talk to the fireplace without it.
-                sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-                break
+            //case "timeremaining":             // Seconds until timer turns off fireplace (doesn't get updated frequently enough)
+            //case "name":                      // Blank on my fireplace
+            //case "battery":                   // Emergency battery level (USB-C connection)
+            //case "feature_thermostat":        // Does this fireplace have a thermostat and temperature data?
+            //case "power_vent":                // Does this fireplace have a power vent?
+            //case "feature_fan":               // Does this fireplace have a fan?
+            //case "secondary_burner":          // Secondary burner active (?)
+            //case "ember_lights":              // Ember lights active (?)
+            //case "colored_lights":            // Colored lights active (?)
+            //case "hm_1":                      // Unknown
+            //case "hm_2":                      // Unknown
+            //case "hm_3":                      // Unknown
+            //case "hm_4":                      // Unknown
+            //case "feature_secondary_burner":  // Does this fireplace have a secondary burner?
+            //case "feature_ember_lights":      // Does this fireplace have ember lights?
+            //case "feature_colored_lights":    // Does this fireplace have colored lights?
+            //case "feature_hm_1":              // Does this fireplace have hm_1?
+            //case "feature_hm_2":              // Does this fireplace have hm_2?
+            //case "feature_hm_3":              // Does this fireplace have hm_3?
+            //case "feature_hm_4":              // Does this fireplace have hm_4?
+            //case "fw_version":                // Numeric firmware version (not useful)
+            //case "fw_ver_string":             // String firmware version
+            //case "downtime":                  // Unknown
+            //case "uptime":                    // Time fireplace has been on internet
+            //case "connection_quality":        // Connection quality of thermostat remote
+            //case "ecm_latency":               // Unknown
+            //case "ipv4_address":              // We already know this.  Can't talk to the fireplace without it.
+                // sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                // break
         }
     }
 
@@ -611,7 +651,24 @@ void consumeStatus(statusMap)
 
     // ThermostatMode
     // We've tied "heat" vs "off" to the switch value.
-    sendEvent(name: "thermostatMode", value: switchStatus ? "heat" : "off")
+    sendEvent(name: "thermostatMode", value: switchStatus ? "heat" : "off", descriptionText:"Thermostat mode")
+
+    if (!state.isUsingCloud)
+    {
+        if (switchStatus != previousSwitchStatus || forceSchedule)
+        {
+            if (switchStatus)
+            {
+                log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
+                runEvery5Minutes("refresh")
+            }
+            else
+            {
+                log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
+                runEvery15Minutes("refresh")
+            }
+        }
+    }
 }
 
 //===========
@@ -874,11 +931,11 @@ void softReset()
 //===========
 // UTILITIES
 //===========
-int convertCelsiusToUserTemperature(celsiusTemperature)
+def convertCelsiusToUserTemperature(celsiusTemperature)
 {
     if (getTemperatureScale() == "F")
     {
-        return Math.round(celsiusToFahrenheit(celsiusTemperature))
+        return Math.round(celsiusToFahrenheit(celsiusTemperature.toBigDecimal()))
     }
     else
     {
@@ -886,13 +943,13 @@ int convertCelsiusToUserTemperature(celsiusTemperature)
     }
 }
 
-int convertUserTemperatureToCelsius(userTemperature)
+def convertUserTemperatureToCelsius(userTemperature)
 {
     if (getTemperatureScale() == "F")
     {
         // The ECM or remote is truncating here, not rounding.
         // Copying that behavior here for consistency, as maddening as that is...
-        return fahrenheitToCelsius(userTemperature)
+        return (int)fahrenheitToCelsius(userTemperature.toBigDecimal())
     }
     else
     {
@@ -991,7 +1048,6 @@ def sendCloudCommand(command, value)
 
     def success= false
     def commandSpec = INTELLIFIRE_COMMANDS[command]
-    def serial = state.serial
 
     if (value < commandSpec.min || value > commandSpec.max)
     {
@@ -1004,7 +1060,7 @@ def sendCloudCommand(command, value)
     try
     {
         httpPost([
-                uri: "${parent.getRemoteServerRoot()}/$serial/${settings.apiKey}/apppost",
+                uri: "${parent.getRemoteServerRoot()}/${state.serial}/${settings.apiKey}/apppost",
                 headers: [ 'Cookie': parent.makeCookiesString() ],
                 body: "${commandSpec.cloudCommand}=$value",
                 timeout: 10

@@ -47,7 +47,7 @@ To work around this limitation, this device driver will attempt to cache the cur
 The IntelliFire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, adjust the temperature by at least 2°F each time.
 
 ### Light limitation
-It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, a virtual light child device will be created to control the Light like any other light.  This will be created in the IntelliFire Fireplace Manager app during setup, or if deleted and be recreated later by pressing the **Create Virtual Light Device** button on the Fireplace.
+It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, a virtual light child device will be created to control the Light like any other light.  This will be created in the IntelliFire Fireplace Manager app during setup, or if deleted can be recreated later by pressing the **Create Virtual Light Device** button on the Fireplace.
 
 ## Troubleshooting
 The IntelliFire modules are notorious for being a bit unstable.  They should be fine in most normal use cases, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
@@ -88,7 +88,7 @@ The following lists the settings to change.  If a setting is not listed here, de
       * If you want to use names for fan speeds, only these four Hubitat speeds are supported.
       * Adjust "Google Home Level Names for" each fan speed if you want to use different terms.
     * Supports Fan Speed Percentage: **enabled**
-    * Current Fan Speed Percentage Attribute: **fanspeedpercent**
+    * Current Fan Speed Percentage Attribute: **fanspeedPercent**
     * Fan Speed Percent Command: **setSpeedPercentage**
 
 Once you've configured a device, don't forget to tag your fireplace as this type so Google can see it.

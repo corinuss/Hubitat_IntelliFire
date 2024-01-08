@@ -61,6 +61,9 @@ preferences {
         page(name: "locationsPage")
         page(name: "fireplacesPage")
         page(name: "createResultsPage")
+        page(name: "addCredentialsPage")
+        page(name: "addCredentialsResultPage")
+        page(name: "removeCredentialsPage")
     }
 }
 
@@ -137,7 +140,7 @@ def addCredentialsResultPage()
     }
     else
     {
-        return dynamicPage(name: "addCredentialsErrorPage", title: "Login Error") {
+        return dynamicPage(name: "addCredentialsErrorPage", title: "Login Error", nextPage: "addCredentialsPage") {
             section("")
             {
                 paragraph "The username or password you entered is incorrect."
@@ -290,7 +293,7 @@ Boolean doLogin(clearCredentialsIfInvalid = false)
                 gatherCookies(resp)
 
                 // Bump the id so everyone knows credentials have changed.
-                state.loginUniqueId = (state.loginUniqueId :? 0) + 1
+                state.loginUniqueId = (state.loginUniqueId ?: 0) + 1
                 success = true
             }
         }
@@ -540,7 +543,7 @@ void gatherCookies(response)
 
 def getCurrentLoginId()
 {
-    return state.loginUniqueId :? 0
+    return state.loginUniqueId ?: 0
 }
 
 String makeCookiesString(loginUniqueId = null)
