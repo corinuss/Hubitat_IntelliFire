@@ -233,6 +233,7 @@ void localPoll(forceSchedule = false)
         }
     }
 
+    // TODO - Fix this.  device.currentValue isn't updating fast enough?
     // def switchStatus = device.currentValue("switch", true)
     // if (switchStatus != previousSwitchStatus || forceSchedule)
     // {
@@ -266,6 +267,7 @@ void cloudPoll()
     if (!state.isLoggedIn)
     {
         logDebug "Aborting cloudPoll since we aren't logged in."
+        return
     }
 
     logDebug "Poll Start"
@@ -276,13 +278,9 @@ void cloudPoll()
 
     try
     {
-        def uri = "${parent.getRemoteServerRoot()}/${state.serial}/apppoll"
-        def headers = [ 'Cookie': cookies ]
-        logDebug "uri: $uri     headers: $headers"
-
         httpGet([
-                uri: uri,
-                headers: headers,
+                uri: "${parent.getRemoteServerRoot()}/${state.serial}/apppoll",
+                headers: [ 'Cookie': cookies ],
             ])
         { resp ->
             logDebug "apppoll Status ${resp.getStatus()}"
@@ -403,7 +401,7 @@ void cloudLongPollResult(resp, data)
             }
         }
 
-        if (isExpectedResponse || state.loginChanged)
+        if (isExpectedResponse && !state.loginChanged)
         {
             logDebug "Long Poll Continue"
             state.cloudLongPollActive = true
@@ -419,12 +417,20 @@ void cloudLongPollResult(resp, data)
         }
         else
         {
+            def retryDelayMilliseconds = 60000 - (now() - state.cloudPollTimestamp)
+
             if (!isExpectedResponse)
             {
-                log.warn "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll."
+                def delayString = ""
+                def retryDelaySeconds = (int)(retryDelayMilliseconds / 1000)
+                if (retryDelaySeconds > 0)
+                {
+                    delayString = " in $retryDelaySeconds seconds"
+                }
+
+                log.warn "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll$delayString."
             }
 
-            def retryDelayMilliseconds = 60000 - (now() - state.cloudPollTimestamp)
             if (retryDelayMilliseconds > 0)
             {
                 runInMillis(retryDelayMilliseconds, "cloudPoll")
@@ -1174,14 +1180,14 @@ private static final INTELLIFIRE_COMMANDS =
     ],
     "THERMOSTAT_SETPOINT":
     [
-        cloudCommand: "thermostat_setpoint",
+        cloudCommand: "setpoint",
         localCommand: "thermostat_setpoint",
         min: 0,
         max: 3700 // 37°C
     ],  // 0 = disable thermostat
     "TIME_REMAINING":
     [
-        cloudCommand: "time_remaining",
+        cloudCommand: "timeremaining",
         localCommand: "time_remaining",
         min: 0,
         max: 10800
