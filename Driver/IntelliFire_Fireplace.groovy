@@ -25,7 +25,8 @@
  *  SOFTWARE.
  *
  *  Change Log:
- *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
+ *    01/09/2024 2.0.0-beta.1   - Fix for duplicate events being received during cloud long polls.
+ *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
  *                          Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
@@ -603,7 +604,7 @@ void cloudLongPollResult(resp, data)
     //      Reaction: Issue a new long poll and send the Etag back.
     // * Long Poll timeout
     //      Status is 408 and headers contain a default Etag ("0:0")
-    //      Reaction: Issue a new long poll without the Etag to resume.
+    //      Reaction: Issue a new long poll (with the previously good Etag if we had one) to resume.
     // * Connection died
     //      Status is 408 and headers do NOT contain an Etag.
     //      Reaction: Restart polling with a normal poll first.
@@ -611,7 +612,7 @@ void cloudLongPollResult(resp, data)
     //      Status is anything else.
     //      Reaction: Restart polling with a normal poll first.
 
-    logDebug "longPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
+    logDebug "cloudLongPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
 
     if (resp.getStatus() == 200)
     {
@@ -627,7 +628,6 @@ void cloudLongPollResult(resp, data)
     else if (state.isUsingCloud && state.isLoggedIn)
     {
         def isExpectedResponse = false
-        def outgoingHeaders = [ 'Cookie': data['cookies'] ]
 
         if (resp.getStatus() == 200 || resp.getStatus() == 408)
         {
@@ -642,9 +642,8 @@ void cloudLongPollResult(resp, data)
                 if (resp.getStatus() == 200)
                 {
                     // Need to send the Etag back to avoid getting the same data again.
-                    def etag = incomingHeaders['Etag']
-                    outgoingHeaders['If-None-Match'] = etag
-                    logDebug "Etag = $etag"
+                    data['Etag'] = incomingHeaders['Etag']
+                    logDebug "Etag = ${data['Etag']}"
                 }
             }
         }
@@ -653,6 +652,13 @@ void cloudLongPollResult(resp, data)
         {
             logDebug "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
             state.cloudPollTimestamp = now()
+
+            def outgoingHeaders = [ 'Cookie': data['cookies'] ]
+            if (data.containsKey('Etag'))
+            {
+                outgoingHeaders['If-None-Match'] = data['Etag']
+            }
+
             asynchttpGet(
                 cloudLongPollResult,
                 [
