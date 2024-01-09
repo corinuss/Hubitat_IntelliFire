@@ -72,8 +72,8 @@ metadata
         command 'setPilotLight', [[name: "Cold Climate pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
         command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
-        command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow fireplace thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
-        command 'setThermostatMode', [[name: "Mode", type:"ENUM", description:"Hubitat Thermostat Mode. (Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
+        command 'setThermostatControl', [[name: "Fireplace Thermostat Control", description:"Allow fireplace thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setThermostatMode', [[name: "Hubitat Thermostat Mode", type:"ENUM", description:"(Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'softReset'
 
@@ -120,12 +120,6 @@ void installed()
     configure()
 }
 
-// TODO Stop monitor on uninstall?
-void uninstalled()
-{
-    unschedule("cloudLongPollMonitor")
-}
-
 void configure()
 {
     cleanupDeprecatedSettings()
@@ -153,16 +147,7 @@ void cleanupDeprecatedSettings()
     device.deleteCurrentState('timeremaining')
 }
 
-void setSerial(serial)
-{
-    // TODO - If serial isn't set try a local poll?
-    
-    // Pre-populate the serial number if it was provided to us.
-    // Guarantees we have it in case the fireplace isn't available during initialization from the Manager app.
-    state.serial = serial
-}
-
-void updateCloudControl()
+void updated()
 {
     if (state.isUsingCloud != settings.enableCloudControl)
     {
@@ -178,7 +163,7 @@ void updateCloudControl()
         else
         {
             unschedule("cloudLongPollMonitor")
-            localPoll()
+            localPoll(forceSchedule: true)
         }
     }
 }
@@ -191,19 +176,301 @@ void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
         state.isLoggedIn = isLoggedIn
         if (state.isUsingCloud && !initialization)
         {
-            logDebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedin -> $isLoggedIn)"
+            logDebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedIn -> $isLoggedIn)"
 
-            if (isLogged && !wasLoggedIn)
-            {
-                log.info "Restarting cloud polling since we've signed back in."
-                cloudPoll()
-            }
-            else
-            {
+            // TODO: FIX ME!!!  Enabling this causes a ton of cloudPolls to start.  :(
+            // if (isLoggedIn && !wasLoggedIn)
+            // {
+            //     log.info "Restarting cloud polling since we've signed back in."
+            //     cloudPoll()
+            // }
+            // else
+            // {
                 // Used to trigger a restart of the async loop.
                 state.loginChanged = true
-            }
+            //}
         }
+    }
+}
+
+//===========
+// FAN SPEED
+//===========
+
+// Google Home Community
+void setSpeedPercentage(fanspeedPercentage)
+{
+    int fanspeed = (int)((fanspeedPercentage+24)/25);
+    setSpeedInternal(fanspeed)
+}
+
+// FanControl
+void setSpeed(String fanspeed)
+{
+    // Set the fan speed.
+    int fanspeedInt = 0
+
+    int fanspeedCount = FanControlSpeed.size()
+    for (int i=0; i<fanspeedCount; i++)
+    {
+        if (fanspeed == FanControlSpeed[i])
+        {
+            fanspeedInt = i
+        }
+    }
+
+    setSpeedInternal(fanspeedInt)
+}
+
+void setSpeedInternal(int fanspeed)
+{
+    // Explicitly set Last fan speed here.
+    // Ensures that if we turn off the fan, we don't try to restore it later.
+    // Also ensures we save the fan speed changes while the flame is currently off due to thermostat control.
+    state.fanspeedLast = 0
+    
+    sendCommand("FAN_SPEED", fanspeed)
+}
+
+void restoreFanSpeed()
+{
+    int fanspeedLast = state.fanspeedLast ?: 0
+    if (fanspeedLast != 0)
+    {
+        logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
+
+        refresh()
+        if (device.currentValue("fanspeed", true) == 0)
+        {
+            log.info "Restoring fan speed to $fanspeedLast"
+            setSpeedInternal(fanspeedLast)
+        }
+    }
+}
+
+// FanControl
+void cycleSpeed()
+{
+    // Poll to get current value, then update to next value
+    refresh()
+    
+    int newFanspeed = (device.currentValue("fanspeed", true) ?: 0) + 1
+    if (newFanspeed >= FanControlSpeed.size())
+    {
+        newFanspeed = 0
+    }
+
+    setSpeedInternal(newFanspeed)
+}
+
+//========
+// SWITCH
+//========
+
+// Switch
+void on()
+{
+    if (shouldRestoreFanSpeed)
+    {
+        logDebug "Will check fan speed in 5 minutes."
+        runIn(5*60, "restoreFanSpeed", [overwrite: true])
+    }
+
+    if (thermostatOnDefault)
+    {
+        // Let's try to restore the last thermostat value, if we know it.
+        setThermostatControl("on")
+    }
+    else
+    {
+        sendCommand("POWER", 1)
+    }
+}
+
+// Switch (and ThermostateMode)
+void off()
+{
+    unschedule("restoreFanSpeed")
+
+    // Turn off all modes.
+    sendCommand("POWER", 0)
+}
+
+//====================
+// THERMOSTAT CONTROL
+//====================
+def setThermostatMode(thermostatmode)
+{
+    if (thermostatmode == "heat")
+    {
+        heat()
+    }
+    else
+    {
+        off()
+    }
+}
+
+def heat()
+{
+    on()
+}
+
+// ThermostatHeatingSetpoint
+void setHeatingSetpoint(temperature)
+{
+    // Set thermostat temperature
+    def setpoint = convertUserTemperatureToCelsius(temperature) * 100
+    sendCommand("THERMOSTAT_SETPOINT", setpoint)
+}
+
+void setThermostatControl(enabled)
+{
+    // Enable/disable Thermostat mode
+    refresh()
+    int setPointValue = 0
+    if (OnOffValue[enabled])
+    {
+        // If not set (such as first run), set this to something reasonable so the flame comes on if the room is cold.
+        // Default value on the remote is 72F (22C).
+        setPointValue = state.setpointLast ?: 2200
+    }
+
+    sendCommand("THERMOSTAT_SETPOINT", setPointValue)
+}
+
+//=======
+// LIGHT
+//=======
+void createVirtualLightDevice(overrideHasLight = false)
+{
+    if (!overrideHasLight && state.hasLight != 1)
+    {
+        log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
+        return
+    }
+
+    def serial = state.serial
+    if (serial == null)
+    {
+        log.error "No serial available.  Cannot create child Light device."
+        return
+    }
+
+    def fireplaceLightDni = "IntelliFireLight-$serial"
+
+    def childDevice = getChildDevice(fireplaceLightDni)
+    if (childDevice == null)
+    {
+        def myLabel = device.getLabel()
+        def childLabel = "$myLabel Light"
+
+        log.info "Creating new Light child device $childLabel"
+        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
+        childDevice.setLightLevelFromParent(device.currentValue("light"))
+    }
+    else
+    {
+        log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
+    }
+}
+
+// Light (via Light virtual device)
+void lightOn()
+{
+    // Restore the previous light level.
+    def lightLevel = state.lightLast ?:  INTELLIFIRE_COMMANDS["LIGHT"].max
+    
+    setLightLevel(lightLevel)
+}
+
+// Light (via Light virtual device)
+void lightOff()
+{
+    setLightLevel(0)
+}
+
+// SwitchLevel (via Light virtual device)
+void setLightLevel(level)
+{
+    // Set light level 0-3
+    sendCommand("LIGHT", level)
+}
+
+//================
+// OTHER COMMANDS
+//================
+
+void beep()
+{
+    // Beep!  (...if it would actually beep.)
+    sendCommand("BEEP", 1)
+}
+
+void setPilotLight(enabled)
+{
+    // Enable/disable cold weather pilot light
+    sendCommand("PILOT", OnOffValue[enabled])
+}
+
+// SwitchLevel
+void setLevel(level, duration = 0)
+{
+    // 'duration' is not used
+
+    // Map the percentage to our flame height levels.
+    //  0    = flame height 0
+    //  1-25 = flame height 1
+    // 26-50 = flame height 2
+    // ...
+    def flameHeight = (int)((level+24)/25);
+    setFlameHeight(flameHeight);
+}
+
+void setFlameHeight(flameHeight)
+{
+    // Set flame height 0-4
+    sendCommand("FLAME_HEIGHT", flameHeight)
+}
+
+void setTimer(minutes)
+{
+    // Set Sleep timer (up to 3 hours)
+    // Convert to seconds before sending to fireplace.
+    sendCommand("TIME_REMAINING", minutes*60)
+}
+
+void softReset()
+{
+    sendCommand("SOFT_RESET", 1)
+}
+
+//===========
+// UTILITIES
+//===========
+def convertCelsiusToUserTemperature(celsiusTemperature)
+{
+    if (getTemperatureScale() == "F")
+    {
+        return Math.round(celsiusToFahrenheit(celsiusTemperature.toBigDecimal()))
+    }
+    else
+    {
+        return celsiusTemperature
+    }
+}
+
+def convertUserTemperatureToCelsius(userTemperature)
+{
+    if (getTemperatureScale() == "F")
+    {
+        // The ECM or remote is truncating here, not rounding.
+        // Copying that behavior here for consistency, as maddening as that is...
+        return (int)fahrenheitToCelsius(userTemperature.toBigDecimal())
+    }
+    else
+    {
+        return userTemperature
     }
 }
 
@@ -220,44 +487,22 @@ void refresh(forceSchedule = false)
 
 void localPoll(forceSchedule = false)
 {
-    // def previousSwitchStatus = device.currentValue("switch")
-
     // Update current state from fireplace.
     log.info "Refreshing status..."
     synchronized(this)
     {
         httpGet("http://${settings.ipAddress}/poll")
         { resp ->
-            logDebug "Status ${resp.getStatus()}"
-            consumePollData(parseJson(resp.data.text))
+            logDebug "localPoll Status ${resp.getStatus()}"
+            consumePollData(parseJson(resp.data.text), forceSchedule)
         }
     }
-
-    // TODO - Fix this.  device.currentValue isn't updating fast enough?
-    // def switchStatus = device.currentValue("switch", true)
-    // if (switchStatus != previousSwitchStatus || forceSchedule)
-    // {
-    //     if (switchStatus == "on")
-    //     {
-    //         log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
-    //         runEvery5Minutes("refresh")
-    //     }
-    //     else
-    //     {
-    //         log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
-    //         runEvery15Minutes("refresh")
-    //     }
-    // }
-
-    updateCloudControl()
 }
 
 void cloudPoll()
 {
-    // TODO - Should we save off an incrementing value and use that to determine whether we need to kill a loop, in case a new loop is started?
     def success = true
 
-    updateCloudControl()
     if (!state.isUsingCloud)
     {
         logDebug "Aborting cloudPoll since we're switching to local control."
@@ -270,7 +515,8 @@ void cloudPoll()
         return
     }
 
-    logDebug "Poll Start"
+    def cloudPollUniqueId = updateCloudPollUniqueId()
+    logDebug "cloudPoll($cloudPollUniqueId) Start"
     state.cloudPollTimestamp = now()
     state.loginChanged = false
 
@@ -278,23 +524,24 @@ void cloudPoll()
 
     try
     {
+        log.info "Refreshing status from cloud..."        
         httpGet([
                 uri: "${parent.getRemoteServerRoot()}/${state.serial}/apppoll",
                 headers: [ 'Cookie': cookies ],
             ])
         { resp ->
-            logDebug "apppoll Status ${resp.getStatus()}"
+            logDebug "cloudPoll($cloudPollUniqueId) Status ${resp.getStatus()}"
             consumePollData(resp.data)
         }
     }
     catch (HttpResponseException e)
     {
         def statusCode = e.getStatusCode()
-        logDebug "apppoll Status $statusCode"
+        logDebug "cloudPoll($cloudPollUniqueId) Status $statusCode"
 
         if (statusCode == 403)
         {
-            log.error "Failed while issuing poll command due to invalid credentials."
+            log.error "Failed while issuing cloud poll command due to invalid credentials."
             if (parent.refreshCredentials())
             {
                 // If we successfully signed back in, try again.
@@ -304,7 +551,7 @@ void cloudPoll()
         }
         else
         {
-            log.error "Failed while issuing poll command: Response $statusCode"
+            log.error "Failed while issuing cloud poll command: Response $statusCode"
         }
 
         success = false
@@ -312,15 +559,15 @@ void cloudPoll()
 
     if (success)
     {
-        cloudLongPollStart(cookies)
+        cloudLongPollStart(cookies, cloudPollUniqueId)
     }
 }
 
-void cloudLongPollStart(cookies)
+void cloudLongPollStart(cookies, cloudPollUniqueId)
 {
-    if (state.cloudLongPollActive)
+    if (state.cloudPollUniqueId != cloudPollUniqueId)
     {
-        log.error "There is a cloud long poll currently in progress.  Not starting another long poll."
+        logDebug "cloudLongPollStart: state.cloudPollUniqueId(${state.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
         return
     }
 
@@ -335,8 +582,7 @@ void cloudLongPollStart(cookies)
         return
     }
 
-    logDebug "Long Poll Start"
-    state.cloudLongPollActive = true
+    logDebug "cloudLongPollStart($cloudPollUniqueId) Start"
     state.cloudPollTimestamp = now()
 
     asynchttpGet(
@@ -346,7 +592,7 @@ void cloudLongPollStart(cookies)
             headers: [ 'Cookie': cookies ],
             timeout: 63
         ],
-        [ 'cookies': cookies ])
+        [ 'cookies': cookies, 'cloudPollUniqueId': cloudPollUniqueId ])
 }
 
 void cloudLongPollResult(resp, data)
@@ -365,18 +611,20 @@ void cloudLongPollResult(resp, data)
     //      Status is anything else.
     //      Reaction: Restart polling with a normal poll first.
 
-    state.cloudLongPollActive = false
-    logDebug "longPollResult Status ${resp.getStatus()}"    
+    logDebug "longPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
 
     if (resp.getStatus() == 200)
     {
+        log.info "Received fireplace state update from cloud."
         consumePollData(parseJson(resp.data))
     }
 
-    // Check to see if we've switched to local polling before sending another request.
-    updateCloudControl()
-
-    if (state.isUsingCloud && state.isLoggedIn)
+    // Now figure out which Poll request we should send (if any)
+    if (state.cloudPollUniqueId != data['cloudPollUniqueId'])
+    {
+        logDebug "cloudLongPollResult: state.cloudPollUniqueId(${state.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
+    }
+    else if (state.isUsingCloud && state.isLoggedIn)
     {
         def isExpectedResponse = false
         def outgoingHeaders = [ 'Cookie': data['cookies'] ]
@@ -403,8 +651,7 @@ void cloudLongPollResult(resp, data)
 
         if (isExpectedResponse && !state.loginChanged)
         {
-            logDebug "Long Poll Continue"
-            state.cloudLongPollActive = true
+            logDebug "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
             state.cloudPollTimestamp = now()
             asynchttpGet(
                 cloudLongPollResult,
@@ -456,17 +703,24 @@ void cloudLongPollMonitor()
 
             if (state.cloudPollTimestamp + 120000 < currentTime)
             {
-                log.warn "Cloud long polling appears to have stalled.  cloudLongPollActive(${state.cloudLongPollActive}). Restarting..."
-
-                state.cloudLongPollActive = false
-
+                log.warn "Cloud long polling appears to have stalled. Restarting..."
                 cloudPoll()
             }
         }
     }
 }
 
-void consumePollData(pollDataMap)
+// Generates a unique id to help enforce only one cloud poll loop is running.
+def updateCloudPollUniqueId()
+{
+    synchronized (state)
+    {
+        state.cloudPollUniqueId = (state.cloudPollUniqueId ?: 0) + 1
+        return state.cloudPollUniqueId
+    }
+}
+
+void consumePollData(pollDataMap, forceSchedule = false)
 {                    
     // To set the Switch status properly, we need to store the new power and thermostat status
     // within this function, since events don't immediately apply.  May as well intialize them
@@ -676,292 +930,6 @@ void consumePollData(pollDataMap)
     }
 }
 
-//===========
-// FAN SPEED
-//===========
-
-// Google Home Community
-void setSpeedPercentage(fanspeedPercentage)
-{
-    int fanspeed = (int)((fanspeedPercentage+24)/25);
-    setSpeedInternal(fanspeed)
-}
-
-// FanControl
-void setSpeed(String fanspeed)
-{
-    // Set the fan speed.
-    int fanspeedInt = 0
-
-    int fanspeedCount = FanControlSpeed.size()
-    for (int i=0; i<fanspeedCount; i++)
-    {
-        if (fanspeed == FanControlSpeed[i])
-        {
-            fanspeedInt = i
-        }
-    }
-
-    setSpeedInternal(fanspeedInt)
-}
-
-void setSpeedInternal(int fanspeed)
-{
-    // Explicitly set Last fan speed here.
-    // Ensures that if we turn off the fan, we don't try to restore it later.
-    // Also ensures we save the fan speed changes while the flame is currently off due to thermostat control.
-    state.fanspeedLast = 0
-    
-    sendCommand("FAN_SPEED", fanspeed)
-}
-
-void restoreFanSpeed()
-{
-    int fanspeedLast = state.fanspeedLast ?: 0
-    if (fanspeedLast != 0)
-    {
-        logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
-
-        refresh()
-        if (device.currentValue("fanspeed", true) == 0)
-        {
-            log.info "Restoring fan speed to $fanspeedLast"
-            setSpeedInternal(fanspeedLast)
-        }
-    }
-}
-
-// FanControl
-void cycleSpeed()
-{
-    // Poll to get current value, then update to next value
-    refresh()
-    
-    int newFanspeed = (device.currentValue("fanspeed", true) ?: 0) + 1
-    if (newFanspeed >= FanControlSpeed.size())
-    {
-        newFanspeed = 0
-    }
-
-    setSpeedInternal(newFanspeed)
-}
-
-//========
-// SWITCH
-//========
-
-// Switch
-void on()
-{
-    if (shouldRestoreFanSpeed)
-    {
-        logDebug "Will check fan speed in 5 minutes."
-        runIn(5*60, "restoreFanSpeed", [overwrite: true])
-    }
-
-    if (thermostatOnDefault)
-    {
-        // Let's try to restore the last thermostat value, if we know it.
-        setThermostatControl("on")
-    }
-    else
-    {
-        sendCommand("POWER", 1)
-    }
-}
-
-// Switch
-void off()
-{
-    unschedule("restoreFanSpeed")
-
-    // Turn off all modes.
-    sendCommand("POWER", 0)
-}
-
-//====================
-// THERMOSTAT CONTROL
-//====================
-def setThermostatMode(thermostatmode)
-{
-    if (thermostatmode == "heat")
-    {
-        heat()
-    }
-    else
-    {
-        off()
-    }
-}
-
-def heat()
-{
-    on()
-}
-
-// ThermostatHeatingSetpoint
-void setHeatingSetpoint(temperature)
-{
-    // Set thermostat temperature
-    def setpoint = convertUserTemperatureToCelsius(temperature) * 100
-    sendCommand("THERMOSTAT_SETPOINT", setpoint)
-}
-
-void setThermostatControl(enabled)
-{
-    // Enable/disable Thermostat mode
-    refresh()
-    int setPointValue = 0
-    if (OnOffValue[enabled])
-    {
-        // If not set (such as first run), set this to something reasonable so the flame comes on if the room is cold.
-        // Default value on the remote is 72F (22C).
-        setPointValue = state.setpointLast ?: 2200
-    }
-
-    logDebug "setThermostatControl THERMOSTAT_SETPOINT $setPointValue"
-    sendCommand("THERMOSTAT_SETPOINT", setPointValue)
-}
-
-//=======
-// LIGHT
-//=======
-void createVirtualLightDevice(overrideHasLight = false)
-{
-    if (!overrideHasLight && state.hasLight != 1)
-    {
-        log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
-        return
-    }
-
-    def serial = state.serial
-    if (serial == null)
-    {
-        log.error "No serial available.  Cannot create child Light device."
-        return
-    }
-
-    def fireplaceLightDni = "IntelliFireLight-$serial"
-
-    def childDevice = getChildDevice(fireplaceLightDni)
-    if (childDevice == null)
-    {
-        def myLabel = device.getLabel()
-        def childLabel = "$myLabel Light"
-
-        log.info "Creating new Light child device $childLabel"
-        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
-        childDevice.setLightLevelFromParent(device.currentValue("light"))
-    }
-    else
-    {
-        log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
-    }
-}
-
-void lightOn()
-{
-    // Restore the previous light level.
-    def lightLevel = state.lightLast
-    if (lightLevel == null)
-    {
-        // If not yet set, set to max.
-        lightLevel = INTELLIFIRE_COMMANDS["LIGHT"].max
-    }
-    
-    setLightLevel(lightLevel)
-}
-
-// Light (via Light virtual device)
-void lightOff()
-{
-    setLightLevel(0)
-}
-
-// SwitchLevel (via Light virtual device)
-void setLightLevel(level)
-{
-    // Set light level 0-3
-    sendCommand("LIGHT", level)
-}
-
-//================
-// OTHER COMMANDS
-//================
-
-void beep()
-{
-    // Beep!  (...if it would actually beep.)
-    sendCommand("BEEP", 1)
-}
-
-void setPilotLight(enabled)
-{
-    // Enable/disable cold weather pilot light
-    sendCommand("PILOT", OnOffValue[enabled])
-}
-
-// SwitchLevel
-void setLevel(level, duration = 0)
-{
-    // 'duration' is not used
-
-    // Map the percentage to our flame height levels.
-    //  0    = flame height 0
-    //  1-25 = flame height 1
-    // 26-50 = flame height 2
-    // ...
-    def flameHeight = (int)((level+24)/25);
-    setFlameHeight(flameHeight);
-}
-
-void setFlameHeight(flameHeight)
-{
-    // Set flame height 0-4
-    sendCommand("FLAME_HEIGHT", flameHeight)
-}
-
-void setTimer(minutes)
-{
-    // Set Sleep timer (up to 3 hours)
-    // Convert to seconds before sending to fireplace.
-    sendCommand("TIME_REMAINING", minutes*60)
-}
-
-void softReset()
-{
-    sendCommand("SOFT_RESET", 1)
-}
-
-//===========
-// UTILITIES
-//===========
-def convertCelsiusToUserTemperature(celsiusTemperature)
-{
-    if (getTemperatureScale() == "F")
-    {
-        return Math.round(celsiusToFahrenheit(celsiusTemperature.toBigDecimal()))
-    }
-    else
-    {
-        return celsiusTemperature
-    }
-}
-
-def convertUserTemperatureToCelsius(userTemperature)
-{
-    if (getTemperatureScale() == "F")
-    {
-        // The ECM or remote is truncating here, not rounding.
-        // Copying that behavior here for consistency, as maddening as that is...
-        return (int)fahrenheitToCelsius(userTemperature.toBigDecimal())
-    }
-    else
-    {
-        return userTemperature
-    }
-}
-
 //==============
 // SEND COMMAND
 //==============
@@ -1017,8 +985,8 @@ def sendLocalCommand(command, value)
             timeout: 5
         ])
         { resp ->
-            logDebug "Status ${resp.getStatus()}"        
-            logDebug "Data: ${resp.data}"
+            //logDebug "Status ${resp.getStatus()}"        
+            //logDebug "Data: ${resp.data}"
         }
     }
 
@@ -1035,9 +1003,9 @@ def getChallenge()
 {
     httpGet(uri: "http://${settings.ipAddress}/get_challenge")
     { resp ->
-        logDebug "Status ${resp.getStatus()}"
+        //logDebug "Status ${resp.getStatus()}"
         challenge = resp.data.text
-        logDebug "Challenge $challenge"
+        //logDebug "Challenge $challenge"
     }
 
     return challenge
@@ -1072,8 +1040,8 @@ def sendCloudCommand(command, value)
             ])
         { resp ->
             def responseStatus = resp.status
-            logDebug "Status $responseStatus"
-            logDebug "Data: ${resp.data}"
+            //logDebug "Status $responseStatus"
+            //logDebug "Data: ${resp.data}"
             success = true
         }
     }

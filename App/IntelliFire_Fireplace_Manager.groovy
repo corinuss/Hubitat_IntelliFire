@@ -25,7 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
- *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
+ *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.
  *    09/25/2023 v0.6.0   - Save (and forget) website credentials
@@ -156,6 +156,11 @@ def removeCredentialsPage()
     settings.saveCredentials = false
     clearCredentialsIfNeeded()
     clearCookies()
+
+    getChildDevices()?.each
+    {
+        it.notifyLoginChange(false, state.loginUniqueId)
+    }
 
     return dynamicPage(name: "removeCredentialsPage", title: "IntelliFire Credentials Removed", nextPage: "mainPage") {
         section("Login Credentials")
@@ -321,14 +326,14 @@ Boolean doLogin(clearCredentialsIfInvalid = false)
             success = false
         }
 
-        getChildDevices()?.each
-        {
-            it.notifyLoginChange(success, state.loginUniqueId)
-        }
-
         if (success)
         {
             clearCredentialsIfNeeded()
+        }
+
+        getChildDevices()?.each
+        {
+            it.notifyLoginChange(success, state.loginUniqueId)
         }
     }
 
@@ -555,26 +560,29 @@ String makeCookiesString(loginUniqueId = null)
 
     String cookiesString = ""
 
-    // Track expired cookies to remove, since we can't remove while iterating.
-    // 06/19/2022 - Running a Map removeAll() call first to remove expired cookies would be cleaner, except that
-    // it requires Groovy version 2.5.0, and Hubitat is currently on 2.4.21.  :(
-    // def expiredCookies = []
-    // def now = new Date();
+    synchronized(this)
+    {
+        // Track expired cookies to remove, since we can't remove while iterating.
+        // 06/19/2022 - Running a Map removeAll() call first to remove expired cookies would be cleaner, except that
+        // it requires Groovy version 2.5.0, and Hubitat is currently on 2.4.21.  :(
+        // def expiredCookies = []
+        // def now = new Date();
 
-    // state.sessionCookies.each{ entry ->
-    //     if (entry.value.containsKey(expiration) && entry.value.expiration < now)
-    //     {
-    //         expiredCookies << entry.key
-    //     }
-    //     else
-    //     {
-    //         cookiesString = cookiesString + entry.key + '=' + entry.value.value + ';'
-    //     }
-    // }
+        // state.sessionCookies.each{ entry ->
+        //     if (entry.value.containsKey(expiration) && entry.value.expiration < now)
+        //     {
+        //         expiredCookies << entry.key
+        //     }
+        //     else
+        //     {
+        //         cookiesString = cookiesString + entry.key + '=' + entry.value.value + ';'
+        //     }
+        // }
 
-    // expiredCookies.each{ entry -> state.sessionCookies.remove(entry) }
-    
-    state.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
+        // expiredCookies.each{ entry -> state.sessionCookies.remove(entry) }
+        
+        state.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
+    }
 
     //logDebug "cookiesString: $cookiesString"
     
