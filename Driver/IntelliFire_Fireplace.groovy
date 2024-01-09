@@ -72,8 +72,8 @@ metadata
         command 'setPilotLight', [[name: "Cold Climate pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
         command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
-        command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
-        command 'setThermostatMode', [[name: "Mode", type:"ENUM", description:"(Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
+        command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow fireplace thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setThermostatMode', [[name: "Mode", type:"ENUM", description:"Hubitat Thermostat Mode. (Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'softReset'
 
@@ -229,7 +229,7 @@ void localPoll(forceSchedule = false)
         httpGet("http://${settings.ipAddress}/poll")
         { resp ->
             logDebug "Status ${resp.getStatus()}"
-            consumeStatus(parseJson(resp.data.text))
+            consumePollData(parseJson(resp.data.text))
         }
     }
 
@@ -284,7 +284,7 @@ void cloudPoll()
             ])
         { resp ->
             logDebug "apppoll Status ${resp.getStatus()}"
-            consumeStatus(resp.data)
+            consumePollData(resp.data)
         }
     }
     catch (HttpResponseException e)
@@ -370,7 +370,7 @@ void cloudLongPollResult(resp, data)
 
     if (resp.getStatus() == 200)
     {
-        consumeStatus(parseJson(resp.data))
+        consumePollData(parseJson(resp.data))
     }
 
     // Check to see if we've switched to local polling before sending another request.
@@ -466,7 +466,7 @@ void cloudLongPollMonitor()
     }
 }
 
-void consumeStatus(statusMap)
+void consumePollData(pollDataMap)
 {                    
     // To set the Switch status properly, we need to store the new power and thermostat status
     // within this function, since events don't immediately apply.  May as well intialize them
@@ -474,8 +474,8 @@ void consumeStatus(statusMap)
     def powerStatus = device.currentValue("power")
     def thermostatStatus = device.currentValue("thermostat")
 
-    logDebug "$statusMap"
-    statusMap.each
+    logDebug "$pollDataMap"
+    pollDataMap.each
     { param, value ->
         //logDebug "Processing $param = $value"
 
@@ -488,7 +488,7 @@ void consumeStatus(statusMap)
         switch (param) {
             case "temperature":
                 // Thermostat data sometimes cuts out, so only send temperature events if the data is valid...
-                if (statusMap.get("feature_thermostat", 0) != 0)
+                if (pollDataMap.get("feature_thermostat", 0).toInteger() != 0)
                 {
                     // TemperatureMeasurement
                     sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(valueInt), unit: "°${getTemperatureScale()}", descriptionText: "Room temperature")
@@ -618,9 +618,6 @@ void consumeStatus(statusMap)
             //case "timeremaining":             // Seconds until timer turns off fireplace (doesn't get updated frequently enough)
             //case "name":                      // Blank on my fireplace
             //case "battery":                   // Emergency battery level (USB-C connection)
-            //case "feature_thermostat":        // Does this fireplace have a thermostat and temperature data?
-            //case "power_vent":                // Does this fireplace have a power vent?
-            //case "feature_fan":               // Does this fireplace have a fan?
             //case "secondary_burner":          // Secondary burner active (?)
             //case "ember_lights":              // Ember lights active (?)
             //case "colored_lights":            // Colored lights active (?)
@@ -628,6 +625,9 @@ void consumeStatus(statusMap)
             //case "hm_2":                      // Unknown
             //case "hm_3":                      // Unknown
             //case "hm_4":                      // Unknown
+            //case "feature_thermostat":        // Does this fireplace have a thermostat and temperature data?
+            //case "power_vent":                // Does this fireplace have a power vent?
+            //case "feature_fan":               // Does this fireplace have a fan?
             //case "feature_secondary_burner":  // Does this fireplace have a secondary burner?
             //case "feature_ember_lights":      // Does this fireplace have ember lights?
             //case "feature_colored_lights":    // Does this fireplace have colored lights?
@@ -641,7 +641,6 @@ void consumeStatus(statusMap)
             //case "uptime":                    // Time fireplace has been on internet
             //case "connection_quality":        // Connection quality of thermostat remote
             //case "ecm_latency":               // Unknown
-            //case "ipv4_address":              // We already know this.  Can't talk to the fireplace without it.
                 // sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
                 // break
         }
@@ -652,18 +651,18 @@ void consumeStatus(statusMap)
     // From a practical control perspective, we should consider the fireplace to be "on" while the thermostat is
     // in control, regardless of actual flame state.
     def previousSwitchStatus = device.currentValue("switch")
-    def switchStatus = (powerStatus || thermostatStatus)
-    sendEvent(name: "switch", value: switchStatus ? "on" : "off", descriptionText:"power or thermostat is on")
+    def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
+    sendEvent(name: "switch", value: switchStatus, descriptionText:"power or thermostat is on")
 
     // ThermostatMode
     // We've tied "heat" vs "off" to the switch value.
-    sendEvent(name: "thermostatMode", value: switchStatus ? "heat" : "off", descriptionText:"Thermostat mode")
+    sendEvent(name: "thermostatMode", value: (switchStatus == "on") ? "heat" : "off", descriptionText:"Thermostat mode")
 
     if (!state.isUsingCloud)
     {
         if (switchStatus != previousSwitchStatus || forceSchedule)
         {
-            if (switchStatus)
+            if (switchStatus == "on")
             {
                 log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
                 runEvery5Minutes("refresh")
@@ -879,16 +878,16 @@ void lightOff()
     setLightLevel(0)
 }
 
-//================
-// OTHER COMMANDS
-//================
-
 // SwitchLevel (via Light virtual device)
 void setLightLevel(level)
 {
     // Set light level 0-3
     sendCommand("LIGHT", level)
 }
+
+//================
+// OTHER COMMANDS
+//================
 
 void beep()
 {
@@ -1096,11 +1095,6 @@ def sendCloudCommand(command, value)
             log.error "Failed while issuing command '${commandSpec.cloudCommand}': Response $statusCode"
         }
 
-        success = false
-    }
-    catch (e)
-    {
-        log.error "Failed while issuing command '${commandSpec.cloudCommand}': Exception $e"
         success = false
     }
 
