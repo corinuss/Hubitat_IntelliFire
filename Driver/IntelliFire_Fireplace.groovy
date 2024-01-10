@@ -156,13 +156,15 @@ void updated()
 
         if (state.isUsingCloud)
         {
+            log.info "Switching to CLOUD control."
             unschedule("refresh")
             state.loginChanged = false
-            cloudPoll()
+            cloudPollStart()
             runEvery1Minute("cloudLongPollMonitor")
         }
         else
         {
+            log.info "Switching to LOCAL control."
             unschedule("cloudLongPollMonitor")
             localPoll(forceSchedule: true)
         }
@@ -179,17 +181,16 @@ void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
         {
             logDebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedIn -> $isLoggedIn)"
 
-            // TODO: FIX ME!!!  Enabling this causes a ton of cloudPolls to start.  :(
-            // if (isLoggedIn && !wasLoggedIn)
-            // {
-            //     log.info "Restarting cloud polling since we've signed back in."
-            //     cloudPoll()
-            // }
-            // else
-            // {
+            if (isLoggedIn && !wasLoggedIn)
+            {
+                log.info "Restarting cloud polling since we've signed back in."
+                cloudPollStart()
+            }
+            else
+            {
                 // Used to trigger a restart of the async loop.
                 state.loginChanged = true
-            //}
+            }
         }
     }
 }
@@ -500,46 +501,51 @@ void localPoll(forceSchedule = false)
     }
 }
 
-void cloudPoll()
+void cloudPollStart()
 {
     def success = true
 
     if (!state.isUsingCloud)
     {
-        logDebug "Aborting cloudPoll since we're switching to local control."
+        logDebug "Aborting cloudPollStart since we're switching to local control."
         return
     }
 
     if (!state.isLoggedIn)
     {
-        logDebug "Aborting cloudPoll since we aren't logged in."
+        logDebug "Aborting cloudPollStart since we aren't logged in."
         return
     }
 
     def cloudPollUniqueId = updateCloudPollUniqueId()
-    logDebug "cloudPoll($cloudPollUniqueId) Start"
+    logDebug "cloudPollStart($cloudPollUniqueId) Start"
     state.cloudPollTimestamp = now()
     state.loginChanged = false
 
-    def cookies = parent.makeCookiesString()
+    def cookies = [ 'Cookie': parent.makeCookiesString() ]
 
-    try
+    log.info "Refreshing status from cloud..."        
+    asynchttpGet(
+        cloudPollResult,
+        [
+            uri: "${parent.getRemoteServerRoot()}/${state.serial}/apppoll",
+            headers: cookies,
+        ],
+        [ 'cookies': cookies, 'cloudPollUniqueId': cloudPollUniqueId ])
+}
+
+void cloudPollResult(resp, data)
+{
+    def statusCode = resp.getStatus()
+    logDebug "cloudPollResult(${data['cloudPollUniqueId']}) Status $statusCode"
+
+    if (statusCode >= 200 && statusCode < 300)
     {
-        log.info "Refreshing status from cloud..."        
-        httpGet([
-                uri: "${parent.getRemoteServerRoot()}/${state.serial}/apppoll",
-                headers: [ 'Cookie': cookies ],
-            ])
-        { resp ->
-            logDebug "cloudPoll($cloudPollUniqueId) Status ${resp.getStatus()}"
-            consumePollData(resp.data)
-        }
+        consumePollData(parseJson(resp.data))
+        cloudLongPollStart(data['cookies'], data['cloudPollUniqueId'])
     }
-    catch (HttpResponseException e)
+    else
     {
-        def statusCode = e.getStatusCode()
-        logDebug "cloudPoll($cloudPollUniqueId) Status $statusCode"
-
         if (statusCode == 403)
         {
             log.error "Failed while issuing cloud poll command due to invalid credentials."
@@ -547,7 +553,7 @@ void cloudPoll()
             {
                 // If we successfully signed back in, try again.
                 state.loginChanged = false
-                cloudPoll()  
+                cloudPollStart()  
             }
         }
         else
@@ -556,11 +562,6 @@ void cloudPoll()
         }
 
         success = false
-    }
-
-    if (success)
-    {
-        cloudLongPollStart(cookies, cloudPollUniqueId)
     }
 }
 
@@ -577,7 +578,7 @@ void cloudLongPollStart(cookies, cloudPollUniqueId)
         if (state.loggedIn)
         {
             // Login credentials have changed or are no longer valid.  Try a normal poll again.
-            cloudPoll()
+            cloudPollStart()
         }
 
         return
@@ -690,7 +691,7 @@ void cloudLongPollResult(resp, data)
             }
             else
             {
-                cloudPoll()
+                cloudPollStart()
             }
         }
     }
@@ -710,7 +711,7 @@ void cloudLongPollMonitor()
             if (state.cloudPollTimestamp + 120000 < currentTime)
             {
                 log.warn "Cloud long polling appears to have stalled. Restarting..."
-                cloudPoll()
+                cloudPollStart()
             }
         }
     }

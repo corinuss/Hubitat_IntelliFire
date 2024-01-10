@@ -159,7 +159,7 @@ def removeCredentialsPage()
 
     getChildDevices()?.each
     {
-        it.notifyLoginChange(false, state.loginUniqueId)
+        it.notifyLoginChange(false, atomicState.loginUniqueId)
     }
 
     return dynamicPage(name: "removeCredentialsPage", title: "IntelliFire Credentials Removed", nextPage: "mainPage") {
@@ -298,7 +298,7 @@ Boolean doLogin(clearCredentialsIfInvalid = false)
                 gatherCookies(resp)
 
                 // Bump the id so everyone knows credentials have changed.
-                state.loginUniqueId = (state.loginUniqueId ?: 0) + 1
+                atomicState.loginUniqueId = (atomicState.loginUniqueId ?: 0) + 1
                 success = true
             }
         }
@@ -333,7 +333,7 @@ Boolean doLogin(clearCredentialsIfInvalid = false)
 
         getChildDevices()?.each
         {
-            it.notifyLoginChange(success, state.loginUniqueId)
+            it.notifyLoginChange(success, atomicState.loginUniqueId)
         }
     }
 
@@ -508,7 +508,7 @@ def createFireplace(fireplace)
 
 void clearCookies()
 {
-    state.sessionCookies = [:]
+    atomicState.sessionCookies = [:]
 }
 
 void gatherCookies(response)
@@ -541,19 +541,19 @@ void gatherCookies(response)
         if (cookieParts[1].trim() != "")
         {
             //logDebug "Adding cookie to collection: \"${cookieParts[0]} = ${cookieParts[1]}\""
-            state.sessionCookies[cookieParts[0]] = cookieParts[1]
+            atomicState.updateMapValue("sessionCookies", cookieParts[0], cookieParts[1])
         }
     }
 }
 
 def getCurrentLoginId()
 {
-    return state.loginUniqueId ?: 0
+    return atomicState.loginUniqueId ?: 0
 }
 
 String makeCookiesString(loginUniqueId = null)
 {
-    if (loginUniqueId != null && state.loginUniqueId != loginUniqueId)
+    if (loginUniqueId != null && atomicState.loginUniqueId != loginUniqueId)
     {
         return null
     }
@@ -568,7 +568,7 @@ String makeCookiesString(loginUniqueId = null)
         // def expiredCookies = []
         // def now = new Date();
 
-        // state.sessionCookies.each{ entry ->
+        // atomicState.sessionCookies.each{ entry ->
         //     if (entry.value.containsKey(expiration) && entry.value.expiration < now)
         //     {
         //         expiredCookies << entry.key
@@ -579,9 +579,9 @@ String makeCookiesString(loginUniqueId = null)
         //     }
         // }
 
-        // expiredCookies.each{ entry -> state.sessionCookies.remove(entry) }
+        // expiredCookies.each{ entry -> atomicState.sessionCookies.remove(entry) }
         
-        state.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
+        atomicState.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
     }
 
     //logDebug "cookiesString: $cookiesString"
@@ -591,5 +591,5 @@ String makeCookiesString(loginUniqueId = null)
 
 String getCookieValue(key)
 {
-    return state.sessionCookies[key]
+    return atomicState.sessionCookies[key]
 }
