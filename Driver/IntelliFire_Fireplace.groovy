@@ -683,7 +683,7 @@ void cloudLongPollResult(resp, data)
 
             if (retryDelayMilliseconds > 0)
             {
-                runInMillis(retryDelayMilliseconds, "cloudPoll")
+                runInMillis(retryDelayMilliseconds, "cloudPollStart")
             }
             else
             {
