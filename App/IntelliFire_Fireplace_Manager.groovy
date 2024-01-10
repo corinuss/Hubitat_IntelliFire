@@ -175,10 +175,10 @@ def loginPage()
     logDebug "loginPage"
     
     return dynamicPage(name: "loginPage", title: "Connect to IntelliFire Servers", nextPage: "loginResultPage") {
-        section("Login Credentials")
+        section("")
         {
-            paragraph "We need to obtain some information from IntelliFire's servers to allow us to gain local access to the fireplace.  Once the fireplace is set up, all future communication will be done locally (except soft-resets)."
-            paragraph "Before continuing, please ensure that you can access your fireplace(s) from the IntelliFire mobile app, and that you've placed your fireplace(s) on a static IP.  (Use your router's DHCP to reserve an IP for the fireplace.)"
+            paragraph "We need to obtain some information from IntelliFire's servers to allow us to gain local access to the fireplace.  Once the fireplace is set up, all future communication will be done locally, unless cloud control is enabled."
+            paragraph "Before continuing, please ensure that you can access your fireplace(s) from the IntelliFire mobile app.  Also, if you intend to use local control, ensure that you've placed your fireplace(s) on a static IP.  (Use your router's DHCP to reserve an IP for the fireplace.)"
             paragraph "Please provide IntelliFire login credentials."
             input(name: "username", type: "email", title: "Username", description: "IntelliFire Username (email address)")
             input(name: "password", type: "password", title: "Password", description: "IntelliFire Password")
@@ -232,8 +232,7 @@ def fireplacesPage(params)
 
         section("Local or Cloud Control?")
         {
-            paragraph "Local control does not require an internet connection once the fireplace is configured, but can sometimes lock up the wifi module, requiring a power cycle."
-            paragraph "Cloud control also reacts to status updates immediately, allowing the Hubitat device to stay more in sync with the mobile app and physical remote."
+            paragraph "Local control does not require an internet connection once the fireplace is configured, but can sometimes lock up the wifi module, requiring a power cycle.  Cloud control also reacts to status updates immediately, allowing the Hubitat device to stay more in sync with the mobile app and physical remote."
             paragraph "Cloud control is recommended.  You can change this later on device settings."
             if (settings.saveCredentials)
             {
@@ -479,12 +478,13 @@ def createFireplace(fireplace)
         // Apply settings to device
         def hasThermostat = (fireplace.data.containsKey("feature_thermostat") && fireplace.data.feature_thermostat == "1")
 
-        device.updateSetting("ipAddress", fireplace.ipv4_address)
+        //device.updateSetting("enableDebugLogging", true)
+        device.updateSetting("ipAddress", fireplace.data.ipv4_address)
         device.updateSetting("apiKey", fireplace.apiKey)
         device.updateSetting("userId", userId)
         device.updateSetting("thermostatOnDefault", hasThermostat)
         device.updateSetting("enableCloudControl", settings.enableCloudControl)
-        device.consumeStatus(fireplace.data)
+        device.consumePollData(fireplace.data)
         device.notifyLoginChange(settings.saveCredentials, getCurrentLoginId(), true)
         device.configure()
 
@@ -560,29 +560,26 @@ String makeCookiesString(loginUniqueId = null)
 
     String cookiesString = ""
 
-    synchronized(this)
-    {
-        // Track expired cookies to remove, since we can't remove while iterating.
-        // 06/19/2022 - Running a Map removeAll() call first to remove expired cookies would be cleaner, except that
-        // it requires Groovy version 2.5.0, and Hubitat is currently on 2.4.21.  :(
-        // def expiredCookies = []
-        // def now = new Date();
+    // Track expired cookies to remove, since we can't remove while iterating.
+    // 06/19/2022 - Running a Map removeAll() call first to remove expired cookies would be cleaner, except that
+    // it requires Groovy version 2.5.0, and Hubitat is currently on 2.4.21.  :(
+    // def expiredCookies = []
+    // def now = new Date();
 
-        // atomicState.sessionCookies.each{ entry ->
-        //     if (entry.value.containsKey(expiration) && entry.value.expiration < now)
-        //     {
-        //         expiredCookies << entry.key
-        //     }
-        //     else
-        //     {
-        //         cookiesString = cookiesString + entry.key + '=' + entry.value.value + ';'
-        //     }
-        // }
+    // atomicState.sessionCookies.each{ entry ->
+    //     if (entry.value.containsKey(expiration) && entry.value.expiration < now)
+    //     {
+    //         expiredCookies << entry.key
+    //     }
+    //     else
+    //     {
+    //         cookiesString = cookiesString + entry.key + '=' + entry.value.value + ';'
+    //     }
+    // }
 
-        // expiredCookies.each{ entry -> atomicState.sessionCookies.remove(entry) }
-        
-        atomicState.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
-    }
+    // expiredCookies.each{ entry -> atomicState.sessionCookies.remove(entry) }
+    
+    atomicState.sessionCookies.each { key, value -> cookiesString += key + '=' + value + ';' }
 
     //logDebug "cookiesString: $cookiesString"
     

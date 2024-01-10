@@ -126,12 +126,7 @@ void configure()
     cleanupDeprecatedSettings()
 
     sendEvent(name: "supportedFanSpeeds", value: FanControlSpeed)
-
-    // Don't register refresh cycles until we have an IP address.
-    if (settings.ipAddress != null)
-    {
-        refresh(forceSchedule: true)
-    }
+    updated()
 }
 
 void cleanupDeprecatedSettings()
@@ -150,7 +145,7 @@ void cleanupDeprecatedSettings()
 
 void updated()
 {
-    if (state.isUsingCloud != settings.enableCloudControl)
+    if (state.isUsingCloud == null || state.isUsingCloud != settings.enableCloudControl)
     {
         state.isUsingCloud = settings.enableCloudControl
 
