@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/09/2024 2.0.0-beta.2   - Login and Fireplace creation fixes
  *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.

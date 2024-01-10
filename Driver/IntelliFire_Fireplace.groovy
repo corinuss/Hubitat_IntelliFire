@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/09/2024 2.0.0-beta.2   - Login and Fireplace creation fixes
  *    01/09/2024 2.0.0-beta.1   - Fix for duplicate events being received during cloud long polls.
  *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
