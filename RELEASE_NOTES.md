@@ -3,6 +3,9 @@ This doc will contain a record of significant changes to this package.  Minor ve
 
 ## 2.0.0
 
+### If upgrading from 1.x...
+If you intend to use cloud control, launch the Intellifire Manager App and have the app confirm your login credentials (even if you've previously saved them) to allow the devices to access the cloud.
+
 ### Breaking Changes 
 The Hubitat Intellifire interface has gotten a bit messy as features have been added.  Some commands are now redunant.  Some attributes shouldn't be attributes, or follow different naming conventions, etc.  So since breaking changes are allowed during major update, this update fixes some of these issues.  Except for a couple cases, users shouldn't be affected by these changes unless they are trying to be power users
 

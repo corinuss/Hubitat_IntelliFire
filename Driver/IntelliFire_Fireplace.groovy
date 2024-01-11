@@ -497,6 +497,14 @@ void cloudPollStart()
 {
     def success = true
 
+    if (state.isUsingCloud == null)
+    {
+        log.error "Cloud control not initialized.  Open the Intellifire Manager App and confirm your credentials with the app once."
+        device.updateSetting("enableCloudControl", false)
+        updated()
+        return
+    }
+
     if (!state.isUsingCloud)
     {
         logDebug "Aborting cloudPollStart since we're switching to local control."
