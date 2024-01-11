@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/10/2024 2.0.0-beta.3   - Fixing new device creation from scratch
  *    01/09/2024 2.0.0-beta.2   - Login and Fireplace creation fixes
  *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
@@ -242,7 +243,7 @@ def fireplacesPage(params)
             else
             {
                 paragraph "Cloud control is disabled since credentials weren't saved."
-                settings.enableCloudControl = false;
+                app.updateSetting("enableCloudControl", [type:"bool", value: false])
             }
         }
     }
@@ -445,6 +446,13 @@ def getFireplaceInfo(fireplaceSerial)
             else
             {
                 fireplace.data = resp.data
+                
+                if (!fireplace.data.containsKey("serial"))
+                {
+                    // Data from the cloud interface doesn't contain the serial since the serial is required to query,
+                    // so inject it into the data to match local behavior, so we can initialize it.
+                    fireplace.data.serial = fireplaceSerial
+                }
 
                 createFireplace(fireplace)
             }

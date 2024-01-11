@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/10/2024 2.0.0-beta.3   - Fixing new device creation from scratch
  *    01/09/2024 2.0.0-beta.2   - Login and Fireplace creation fixes
  *    01/09/2024 2.0.0-beta.1   - Fix for duplicate events being received during cloud long polls.
  *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
@@ -117,11 +118,6 @@ void logDebug (msg)
 //================
 // INITIALIZATION
 //================
-void installed()
-{
-    configure()
-}
-
 void configure()
 {
     cleanupDeprecatedSettings()
@@ -342,7 +338,7 @@ void setThermostatControl(enabled)
 //=======
 void createVirtualLightDevice(overrideHasLight = false)
 {
-    if (!overrideHasLight && state.hasLight != 1)
+    if (!overrideHasLight && !state.hasLight)
     {
         log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
         return
@@ -520,7 +516,7 @@ void cloudPollStart()
 
     def cookies = [ 'Cookie': parent.makeCookiesString() ]
 
-    log.info "Refreshing status from cloud..."        
+    log.info "Refreshing status from cloud..."
     asynchttpGet(
         cloudPollResult,
         [
