@@ -27,6 +27,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/11/2024 2.0.0-beta.4   - Fixed light 'switch' attribute
  *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
  *    11/15/2023 v1.1.1   - Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
@@ -100,5 +101,5 @@ void setLightLevelFromParent(level)
 
     sendEvent(name: "light", value: level, descriptionText: "Light level")
     sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "Light level")
-    sendEvent(name: "switch", value: level != 0, descriptionText: "Light is on")
+    sendEvent(name: "switch", value: (level != 0) ? "on" : "off", descriptionText: "Light is on")
 }
