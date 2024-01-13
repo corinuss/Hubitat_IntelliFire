@@ -25,6 +25,8 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/13/2024 2.0.0-beta.5   - Adding new "Verbose" debug message class to allow separate filtering of spammy messages.
+                                  Removed 'fanspeed' attribute.
  *    01/10/2024 2.0.0-beta.3   - Fixing new device creation from scratch
  *    01/09/2024 2.0.0-beta.2   - Login and Fireplace creation fixes
  *    01/09/2024 2.0.0-beta.1   - Fix for duplicate events being received during cloud long polls.
@@ -81,7 +83,6 @@ metadata
         command 'softReset'
 
         attribute "errors", "string"
-        attribute "fanspeed", "number"
         attribute "fanspeedPercent", "number"
         attribute "height", "number"
         attribute "hot", "number"
@@ -103,13 +104,21 @@ metadata
         input name: "enableCloudControl", type: "bool", title: "Issue commands via online cloud API?", defaultValue: false
         input name: "thermostatOnDefault", type: "bool", title: "When turning on the fireplace, should the thermostat be enabled by default?", defaultValue: false
         input name: "shouldRestoreFanSpeed", type: "bool", title: "When turning on the fireplace, should we ensure the fan speed is restored to its last value?", defaultValue: false
-        input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", defaultValue: false
+        input name: "enableDebugLogging", type: "enum", title: "Debug Logging Level", options: LogDebugLevel.collect{k,v -> k}, defaultValue: "off"
     }
 }
 
 void logDebug (msg)
 {
-    if (enableDebugLogging)
+    if (enableDebugLogging != null && LogDebugLevel[enableDebugLogging] >= LogDebugLevel["debug"])
+    {
+        log.debug msg
+    }
+}
+
+void logVerbose (msg)
+{
+    if (enableDebugLogging != null && LogDebugLevel[enableDebugLogging] >= LogDebugLevel["verbose"])
     {
         log.debug msg
     }
@@ -120,24 +129,8 @@ void logDebug (msg)
 //================
 void configure()
 {
-    cleanupDeprecatedSettings()
-
     sendEvent(name: "supportedFanSpeeds", value: FanControlSpeed)
     updated()
-}
-
-void cleanupDeprecatedSettings()
-{
-    // Removed in 2.0.0
-    device.deleteCurrentState('fanspeedpercent')
-    device.deleteCurrentState('feature_light')
-    device.deleteCurrentState('fanspeedLast')
-    device.deleteCurrentState('lightLast')
-    device.deleteCurrentState('serial')
-    device.deleteCurrentState('setpoint')
-    device.deleteCurrentState('setpointLast')
-    device.deleteCurrentState('temperatureRaw')
-    device.deleteCurrentState('timeremaining')
 }
 
 void updated()
@@ -202,6 +195,11 @@ void setSpeedPercentage(fanspeedPercentage)
 void setSpeed(String fanspeed)
 {
     // Set the fan speed.
+    setSpeedInternal(getSpeedFromString(fanspeed))
+}
+
+int getSpeedFromString(String fanspeed)
+{
     int fanspeedInt = 0
 
     int fanspeedCount = FanControlSpeed.size()
@@ -213,7 +211,7 @@ void setSpeed(String fanspeed)
         }
     }
 
-    setSpeedInternal(fanspeedInt)
+    return fanspeedInt
 }
 
 void setSpeedInternal(int fanspeed)
@@ -234,7 +232,7 @@ void restoreFanSpeed()
         logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
 
         refresh()
-        if (device.currentValue("fanspeed", true) == 0)
+        if (device.currentValue("speed", true) == FanControlSpeed[0])
         {
             log.info "Restoring fan speed to $fanspeedLast"
             setSpeedInternal(fanspeedLast)
@@ -248,7 +246,8 @@ void cycleSpeed()
     // Poll to get current value, then update to next value
     refresh()
     
-    int newFanspeed = (device.currentValue("fanspeed", true) ?: 0) + 1
+    int currentFanspeed = getSpeedFromString(device.currentValue("speed", true) ?: FanControlSpeed[0])
+    int newFanspeed = currentFanspeed + 1
     if (newFanspeed >= FanControlSpeed.size())
     {
         newFanspeed = 0
@@ -482,12 +481,12 @@ void refresh(forceSchedule = false)
 void localPoll(forceSchedule = false)
 {
     // Update current state from fireplace.
-    log.info "Refreshing status..."
+    logVerbose "Refreshing status..."
     synchronized(this)
     {
         httpGet("http://${settings.ipAddress}/poll")
         { resp ->
-            logDebug "localPoll Status ${resp.getStatus()}"
+            logVerbose "localPoll Status ${resp.getStatus()}"
             consumePollData(parseJson(resp.data.text), forceSchedule)
         }
     }
@@ -497,7 +496,7 @@ void cloudPollStart()
 {
     def success = true
 
-    if (state.isUsingCloud == null)
+    if (state.isLoggedIn == null)
     {
         log.error "Cloud control not initialized.  Open the Intellifire Manager App and confirm your credentials with the app once."
         device.updateSetting("enableCloudControl", false)
@@ -524,7 +523,7 @@ void cloudPollStart()
 
     def cookies = [ 'Cookie': parent.makeCookiesString() ]
 
-    log.info "Refreshing status from cloud..."
+    log.debug "Refreshing full status from cloud..."
     asynchttpGet(
         cloudPollResult,
         [
@@ -613,11 +612,11 @@ void cloudLongPollResult(resp, data)
     //      Status is anything else.
     //      Reaction: Restart polling with a normal poll first.
 
-    logDebug "cloudLongPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
+    logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
 
     if (resp.getStatus() == 200)
     {
-        log.info "Received fireplace state update from cloud."
+        logDebug "Received fireplace state update from cloud."
         consumePollData(parseJson(resp.data))
     }
 
@@ -651,7 +650,7 @@ void cloudLongPollResult(resp, data)
 
         if (isExpectedResponse && !state.loginChanged)
         {
-            logDebug "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
+            logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
             state.cloudPollTimestamp = now()
 
             def outgoingHeaders = [ 'Cookie': data['cookies'] ]
@@ -701,7 +700,7 @@ void cloudLongPollMonitor()
 {
     synchronized(this)
     {
-        logDebug "cloudLongPollMonitor checking..."
+        logVerbose "cloudLongPollMonitor checking..."
         if (state.isUsingCloud && state.isLoggedIn)
         {
             // If we haven't had a successfull long poll for a while,
@@ -735,10 +734,10 @@ void consumePollData(pollDataMap, forceSchedule = false)
     def powerStatus = device.currentValue("power")
     def thermostatStatus = device.currentValue("thermostat")
 
-    logDebug "$pollDataMap"
+    log.debug "$pollDataMap"
     pollDataMap.each
     { param, value ->
-        //logDebug "Processing $param = $value"
+        //logVerbose "Processing $param = $value"
 
         // During local polling, most values are integers.  But during cloud polling, these are strings.
         // Integers are more useful to us, so try to provide an integer version of all data, for the
@@ -757,8 +756,6 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 break
 
             case "fanspeed":
-                sendEvent(name: param, value: valueInt, descriptionText: "Fan speed")
-
                 // FanControl
                 sendEvent(name: "speed", value: FanControlSpeed[valueInt], descriptionText: "Fan speed")
 
@@ -815,7 +812,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
             // Thermostat is controlling flame power
             case "thermostat":
                 thermostatStatus = valueInt
-                sendEvent(name: param, value: valueInt, descriptionText: "Thermostat is active")
+                sendEvent(name: param, value: valueInt, descriptionText: "Thermostat is controlling the flame")
                 break;
 
             case "light":
@@ -868,7 +865,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 break
 
             case "hot":
-                sendEvent(name: param, value: valueInt, descriptionText: "Flame is off, but fan is running to cool the unit")
+                sendEvent(name: param, value: valueInt, descriptionText: "Fireplace hot sensor")
                 break
 
             case "timer":
@@ -917,7 +914,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
 
     // ThermostatMode
     // We've tied "heat" vs "off" to the switch value.
-    sendEvent(name: "thermostatMode", value: (switchStatus == "on") ? "heat" : "off", descriptionText:"Thermostat mode")
+    sendEvent(name: "thermostatMode", value: (switchStatus == "on") ? "heat" : "off", descriptionText:"Hubitat Thermostat mode")
 
     if (!state.isUsingCloud)
     {
@@ -992,8 +989,8 @@ def sendLocalCommand(command, value)
             timeout: 5
         ])
         { resp ->
-            //logDebug "Status ${resp.getStatus()}"        
-            //logDebug "Data: ${resp.data}"
+            //logVerbose "Status ${resp.getStatus()}"        
+            //logVerbose "Data: ${resp.data}"
         }
     }
 
@@ -1010,9 +1007,9 @@ def getChallenge()
 {
     httpGet(uri: "http://${settings.ipAddress}/get_challenge")
     { resp ->
-        //logDebug "Status ${resp.getStatus()}"
+        //logVerbose "Status ${resp.getStatus()}"
         challenge = resp.data.text
-        //logDebug "Challenge $challenge"
+        //logVerbose "Challenge $challenge"
     }
 
     return challenge
@@ -1022,7 +1019,7 @@ def sendCloudCommand(command, value)
 {
     if (!state.isLoggedIn)
     {
-        logDebug "Aborting cloud command $command since we aren't logged in."
+        log.warn "Aborting cloud command $command since we aren't logged in."
         return false
     }
 
@@ -1047,8 +1044,8 @@ def sendCloudCommand(command, value)
             ])
         { resp ->
             def responseStatus = resp.status
-            //logDebug "Status $responseStatus"
-            //logDebug "Data: ${resp.data}"
+            //logVerbose "Status $responseStatus"
+            //logVerbose "Data: ${resp.data}"
             success = true
         }
     }
@@ -1079,6 +1076,13 @@ def sendCloudCommand(command, value)
 //==================
 // GLOBAL CONSTANTS
 //==================
+
+@Field Map LogDebugLevel =
+[
+    "off": 0,
+    "debug": 1,
+    "verbose": 2
+]
 
 // Subset of officially supported FanControl speed names.
 @Field FanControlSpeed =

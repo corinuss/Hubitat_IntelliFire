@@ -8,7 +8,7 @@ During initialization via the Intellifire Manager App, an apiKey unique to the f
 ## Requirements
 * Fireplace must have an IntelliFire WiFi module installed.
 * Fireplace must be registered and configured with an IntelliFire account via the IntelliFire mobile app.  (You should be able to control the fireplace from your mobile app.)
-  * Google: https://play.google.com/store/apps/details?id=com.hearthandhome.intellifire.android&pcampaignid=web_share
+  * Google: https://play.google.com/store/apps/details?id=com.hearthandhome.intellifire.android
   * Apple: https://apps.apple.com/us/app/intellifire/id1456842149
 * If using local control, Fireplace should have a static IP address.  (Use your router's DHCP setting to reserve an IP to the fireplace.)
 
@@ -24,7 +24,7 @@ I currently recommend Cloud control for stability reasons.  But here's a detaile
 
 Cloud control has the following advantages:
 * Significantly more stable.  Local control has a tendency to put the fireplace in a bad state (ECM_OFFLINE), requiring users to manually power cycle the module or fireplace every couple weeks.
-* Status updates are seen almost immediately due to long polling feature.  (Status updates during local control may be delayed a few minutes.)  This allows you to use the Intellifire remote or mobile app without the Hubitat app getting temporarlily out of sync.
+* Status updates are seen almost immediately due to long polling feature.  (Status updates during local control are usually delayed a few minutes.)  This allows you to use the Intellifire remote or mobile app without the Hubitat app getting temporarlily out of sync.
 * Static IP for the fireplace is not required.
 
 Local control has the following advantages:
@@ -48,6 +48,25 @@ The IntelliFire module only understands whole Celsius temperatures.  If your Hub
 
 ### Light limitation
 It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, a virtual light child device will be created to control the Light like any other light.  This will be created in the IntelliFire Fireplace Manager app during setup, or if deleted can be recreated later by pressing the **Create Virtual Light Device** button on the Fireplace.
+
+## Capabilities list
+The following Hubitat capabilities are supported and map to these Fireplace features.
+
+### IntelliFire Fireplace
+**FanControl** - Controls the fan.
+**Refresh** - Forces an immediate refresh of fireplace state. (Local control only)
+**Switch** - Turns the fireplace on and off.  By default will also autoamtically restore the thermostat setting.
+**SwitchLevel** - Controls flame height.
+**TemperatureMeasurement** - Reports the current room temperature as seen by the fireplace.
+**ThermostatHeatingSetpoint** - Sets the thermostat temperature.
+**ThermostatSetpoint** - Sets the thermostat temperature.  (Identical to ThermostatHeatingSetpoint)
+**Tone** - Makes the fireplace beep.  (Many fireplaces won't actually beep on command though.)
+
+### IntelliFire Fireplace Virtual Light
+**Light** - Turns the light on/off.
+**Refresh** - Forces an immediate refresh of light state. (Local control only)
+**Switch** - Turns the light on/off. (Identical to Light)
+**SwitchLevel** - Controls the light level (dimmer)
 
 ## Troubleshooting
 The IntelliFire modules are notorious for being a bit unstable.  They should be fine in most normal use cases, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.
@@ -83,6 +102,9 @@ The following lists the settings to change.  If a setting is not listed here, de
   * Temperature Setting (if you have a Thermostat)
     * Supported Modes: **Off, Heat**
       * Only these modes should be checked.
+    * Other defaults are fine.
+  * Brightness (only if you don't have a Thermostat, for controlling flame height)
+    * All defaults are fine.
   * Fan Speed
     * (Optional) Supported Fan Speeds: **Low, Medium, Medium-High, High**
       * If you want to use names for fan speeds, only these four Hubitat speeds are supported.

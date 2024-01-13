@@ -6,10 +6,12 @@ This doc will contain a record of significant changes to this package.  Minor ve
 ### If upgrading from 1.x...
 If you intend to use cloud control, launch the Intellifire Manager App and have the app confirm your login credentials (even if you've previously saved them) to allow the devices to access the cloud.
 
-### Breaking Changes 
+Your thermostat setpoint, fan, and light values might have returned to defaults after upgrading.  This will only happen during your initial upgrade to 2.x.
+
+#### Breaking Changes 
 The Hubitat Intellifire interface has gotten a bit messy as features have been added.  Some commands are now redunant.  Some attributes shouldn't be attributes, or follow different naming conventions, etc.  So since breaking changes are allowed during major update, this update fixes some of these issues.  Except for a couple cases, users shouldn't be affected by these changes unless they are trying to be power users
 
-#### Removed commands
+##### Removed commands
 Light commands have been removed from the main Fireplace driver to reduce button clutter.  You must use the Fireplace Light child device to control the Lights (and it's better supported by Hubitat).  If it doesn't exist, you can create it with the createVirtualLightDevice button.
 * lightOn
 * lightOff
@@ -18,7 +20,7 @@ Light commands have been removed from the main Fireplace driver to reduce button
 This command has been renamed to better align the ThermostatMode capability (though that capability has not been added due to button clutter).  If you use Google Home Community to control this fireplace, update these settings.
 * setOnOff -> Renamed to setThermostatMode and now supports parameters ["off", "heat"]
 
-#### Removed attributes
+##### Removed attributes
 Attributes have been removed to reduce state clutter
 
 These have been renamed.  Update any rules that use these values.
@@ -33,6 +35,7 @@ These have been moved to internal state tracking.
 * setpointLast
 
 These have been removed completely due to not being useful.
+* fanspeed (functional duplicate of 'speed')
 * temperatureRaw
 * timeremaining
 
