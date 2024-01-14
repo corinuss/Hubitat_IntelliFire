@@ -97,6 +97,8 @@ def getStatusMessage()
 def mainPage()
 {
     logDebug "mainPage"
+
+    app.removeSetting("createLightDevices")
     
     dynamicPage(name: "mainPage", nextPage: "", uninstall: false, install: true)
     {
@@ -226,6 +228,7 @@ def fireplacesPage(params)
     logDebug "fireplacesPage"
     
     getFireplaces(settings.location)
+    app.removeSetting("location")
     
     return dynamicPage(name: "fireplacesPage", title: "Fireplaces", nextPage: "createResultsPage") {
         section("Choose fireplaces to add or refresh") {
@@ -254,6 +257,7 @@ def createResultsPage(params)
     logDebug "fireplaces: $fireplacesInfo"
 
     getFireplaceInfos(settings.fireplaces)
+    app.removeSetting("fireplaces")
 
     return dynamicPage(name: "createResultsPage", title: "Results", nextPage: "mainPage") {
         section {
