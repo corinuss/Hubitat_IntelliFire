@@ -3,7 +3,7 @@
  *
  *  Hubitat version created by Eric Will (corinuss)
  *
- *  Based heavily on 'intellifire4py' by jeeftor for Home Assistant.
+ *  Originally based on 'intellifire4py' by jeeftor for Home Assistant.
  *  https://github.com/jeeftor/intellifire4py
  *
  *  MIT License
@@ -25,12 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
- *    01/13/2024 2.0.0-beta.5   - Adding new "Verbose" debug message class to allow separate filtering of spammy messages.
-                                  Removed 'fanspeed' attribute.
- *    01/10/2024 2.0.0-beta.3   - Fixing new device creation from scratch
- *    01/09/2024 2.0.0-beta.2   - Login and Fireplace creation fixes
- *    01/09/2024 2.0.0-beta.1   - Fix for duplicate events being received during cloud long polls.
- *    01/08/2024 2.0.0-beta.0   - Cloud Control support and a lot of cleanup.  See Release Notes.
+ *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
  *                          Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
