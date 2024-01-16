@@ -50,11 +50,11 @@ Unlike the other commands, this command will ALWAYS run in the cloud (because it
 Cloud is (unusually) more responsive and more stable than Local.  But here's a detailed breakdown on why to choose each one.
 
 Cloud
-* + Status updates are reported immediately (usually within 1 second) via long polling.  The status you see on Hubitat will always be up to date, regardless of what caused the change.
-* - All traffic must go through Intellifire's servers.  Credentials must be saved on the hub (though will only be used if the login session expires).
+* \+ Status updates are reported immediately (usually within 1 second) via long polling.  The status you see on Hubitat will always be up to date, regardless of what caused the change.
+* \- All traffic must go through Intellifire's servers.  Credentials must be saved on the hub (though will only be used if the login session expires).
 
 Local
-* + No automation traffic leaves your local network (except for initially creating the fireplace device).  Will function even if the Intellifire servers are not available.
-* - Fireplace needs a static IP on your local network, since IP address is used to find the fireplace.
-* - Polling can be delayed due to explicit refreshing.  The driver tries to update immediately after it does something that might change the status, but changes from other sources (mobile app or remote) may not be updated immediately.
-* - Unstable.  Often goes offline every few weeks in the winter and requires a physical reset (toggle the switch or power cycle the fireplace).  It's not yet known for certain by the home automation community what causes the local instability.
+* \+ No automation traffic leaves your local network (except for initially creating the fireplace device).  Will function even if the Intellifire servers are not available.
+* \- Fireplace needs a static IP on your local network, since IP address is used to find the fireplace.
+* \- Polling can be delayed due to explicit refreshing.  The driver tries to update immediately after it does something that might change the status, but changes from other sources (mobile app or remote) may not be updated immediately.
+* \- Unstable.  Often goes offline every few weeks in the winter and requires a physical reset (toggle the switch or power cycle the fireplace).  It's not yet known for certain by the home automation community what causes the local instability.
