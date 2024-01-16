@@ -9,7 +9,7 @@
  *  to an overlapping interface.
  *
  *  MIT License
- *  Copyright (c) 2023 Eric Will
+ *  Copyright (c) 2024 Eric Will
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
  *  in the Software without restriction, including without limitation the rights
@@ -27,6 +27,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  *    11/15/2023 v1.1.1   - Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  */
@@ -98,6 +99,6 @@ void setLightLevelFromParent(level)
     levelPercentage = (int)(level * 33.34)
 
     sendEvent(name: "light", value: level, descriptionText: "Light level")
-    sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "Light level percentage")
-    sendEvent(name: "switch", value: level != 0, descriptionText: "Light is on")
+    sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "Light level")
+    sendEvent(name: "switch", value: (level != 0) ? "on" : "off", descriptionText: "Light is on")
 }

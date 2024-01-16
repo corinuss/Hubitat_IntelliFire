@@ -3,11 +3,11 @@
  *
  *  Hubitat version created by Eric Will (corinuss)
  *
- *  Based heavily on 'intellifire4py' by jeeftor for Home Assistant.
+ *  Originally based on 'intellifire4py' by jeeftor for Home Assistant.
  *  https://github.com/jeeftor/intellifire4py
  *
  *  MIT License
- *  Copyright (c) 2023 Eric Will
+ *  Copyright (c) 2024 Eric Will
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
  *  in the Software without restriction, including without limitation the rights
@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
  *                          Fixed the description text in events.
  *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
@@ -44,54 +45,50 @@
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 import java.security.MessageDigest
+import org.apache.http.client.HttpResponseException
 
 metadata
 {
-    definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss", singleThreaded: true)
+    definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss")
     {
         capability "FanControl"
         //capability "Light"      // Conflicts with "Switch".  Use a virtual device to handle the "Light" capability.
-        //capability "Polling"    // Redundant.  "Refresh" seems more appropriate for this in the Hubitat world.
         capability "Refresh"
         capability "Switch"
         capability "SwitchLevel"
         capability "TemperatureMeasurement"
         capability "ThermostatHeatingSetpoint"
+        //capability "ThermostatMode"   // Disabled because it adds too many buttons automatically.
         capability "ThermostatSetpoint"
         capability "Tone"
         
         command 'configure'
         command 'createVirtualLightDevice'
-        command 'lightOff'
-        command 'lightOn'
+        //command 'lightOff'
+        //command 'lightOn'
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
         command 'setLevel', [[name: "Flame height percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Flame Height values [0-4].  Used by SwitchLevel capability."]]
-        command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
-        command 'setOnOff', [[name: "On/Off", type:"ENUM", description:"Turn the fireplace on or off. (Same effect as the separate 'on' and 'off' buttons.)", constraints: OnOffValue.collect {k,v -> k}]]
-        command 'setPilotLight', [[name: "Pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
+        //command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
+        command 'setPilotLight', [[name: "Cold Climate pilot light", type:"ENUM", description:"Enable the cold-weather pilot light?", constraints: OnOffValue.collect {k,v -> k}]]
         command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
         command 'setSpeedPercentage', [[name: "Fan speed percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan Speed values [0-4]."]]
-        command 'setThermostatControl', [[name: "Thermostat Control", description:"Allow thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setThermostatControl', [[name: "Fireplace Thermostat Control", description:"Allow fireplace thermostat to control flame?", type:"ENUM", constraints: OnOffValue.collect {k,v -> k}]]
+        command 'setThermostatMode', [[name: "Hubitat Thermostat Mode", type:"ENUM", description:"(Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
+        command 'softReset'
 
         attribute "errors", "string"
-        attribute "fanspeed", "number"
-        attribute "fanspeedLast", "number"
-        attribute "fanspeedpercent", "number"
-        attribute "feature_light", "number"
+        attribute "fanspeedPercent", "number"
         attribute "height", "number"
+        attribute "hot", "number"
         attribute "level", "number"
         attribute "light", "number"
-        attribute "lightLast", "number"
         attribute "pilot", "number"
         attribute "power", "number"
-        attribute "serial", "string"
-        attribute "setpoint", "number"
-        attribute "setpointLast", "number"
-        attribute "temperatureRaw", "number"
+        attribute "prepurge", "number"
         attribute "thermostat", "number"
+        attribute "thermostatMode", "enum", ThermostatMode // supported modes
         attribute "timer", "number"
-        attribute "timeremaining", "number"
     }
     
     preferences
@@ -99,257 +96,88 @@ metadata
         input name: "ipAddress", type: "text", title: "Local IP Address", required: true
         input name: "apiKey", type: "text", title: "API Key", description: "Find this on IntelliFire's servers", required: true
         input name: "userId", type: "text", title: "User ID", description: "Find this on IntelliFire's servers", required: true
+        input name: "enableCloudControl", type: "bool", title: "Issue commands via online cloud API?", defaultValue: false
         input name: "thermostatOnDefault", type: "bool", title: "When turning on the fireplace, should the thermostat be enabled by default?", defaultValue: false
         input name: "shouldRestoreFanSpeed", type: "bool", title: "When turning on the fireplace, should we ensure the fan speed is restored to its last value?", defaultValue: false
-        input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", defaultValue: false
+        input name: "enableDebugLogging", type: "enum", title: "Debug Logging Level", options: LogDebugLevel.collect{k,v -> k}, defaultValue: "off"
     }
 }
 
 void logDebug (msg)
 {
-    if (enableDebugLogging)
+    if (enableDebugLogging != null && LogDebugLevel[enableDebugLogging] >= LogDebugLevel["debug"])
     {
         log.debug msg
     }
 }
 
-void installed()
+void logVerbose (msg)
 {
-    configure()
+    if (enableDebugLogging != null && LogDebugLevel[enableDebugLogging] >= LogDebugLevel["verbose"])
+    {
+        log.debug msg
+    }
 }
 
+//================
+// INITIALIZATION
+//================
 void configure()
 {
     sendEvent(name: "supportedFanSpeeds", value: FanControlSpeed)
-
-    // Don't register refresh cycles until we have an IP address.
-    if (settings.ipAddress != null)
-    {
-        refresh(true)
-    }
+    updated()
 }
 
-void setSerial(serial)
+void updated()
 {
-    if (serial != null)
+    if (state.isUsingCloud == null || state.isUsingCloud != settings.enableCloudControl)
     {
-        // Pre-populate the serial number if it was provided to us.
-        // Guarantees we have it in case the fireplace isn't available during initialization from the Manager app.
-        sendEvent(name: "serial", value: serial)
-    }
-}
+        state.isUsingCloud = settings.enableCloudControl
 
-void createVirtualLightDevice(overrideHasLight = false)
-{
-    if (!overrideHasLight && device.currentValue("feature_light") != 1)
-    {
-        log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
-        return
-    }
-
-    def serial = device.currentValue("serial")
-    if (serial == null)
-    {
-        log.error "No serial available.  Cannot create child Light device."
-        return
-    }
-
-    def fireplaceLightDni = "IntelliFireLight-$serial"
-
-    def childDevice = getChildDevice(fireplaceLightDni)
-    if (childDevice == null)
-    {
-        def myLabel = device.getLabel()
-        def childLabel = "$myLabel Light"
-
-        log.info "Creating new Light child device $childLabel"
-        addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
-    }
-    else
-    {
-        log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
-    }
-
-    // Refresh to allow the new device to get current status.
-    refresh()
-}
-
-// Poll
-void poll()
-{
-    refresh()
-}
-
-// Refresh
-void refresh(forceSchedule = false)
-{
-    // Update current state from fireplace.
-    log.info "Refreshing status..."
-    httpGet("http://${settings.ipAddress}/poll")
-    { resp ->
-        logDebug "Status ${resp.getStatus()}"        
-        
-        def jsonText = resp.data.text
-        logDebug "$jsonText"
-        
-        // To set the Switch status properly, we need to store the new power and thermostat status
-        // within this function, since events don't immediately apply.  May as well intialize them
-        // with current status, even though they should always be set during refresh...
-        def powerStatus = device.currentValue("power")
-        def thermostatStatus = device.currentValue("thermostat")
-
-        def json = parseJson(jsonText)
-        json.each
-        { param, value ->
-            //logDebug "Processing $param = $value"
-            switch (param) {
-                case "temperature":
-                    // Thermostat data sometimes cut out, so only send temperature events if the data is valid...
-                    if (json["feature_thermostat"] == 1)
-                    {
-                        // Need to rename the fireplace's raw attribute since it conflicts with TemperatureMeasurement's 'temperature'
-                        sendEvent(name: "temperatureRaw", value: value, unit: "°C", descriptionText: "Raw fireplace poll data")
-
-                        // TemperatureMeasurement
-                        sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(value), unit: "°${getTemperatureScale()}")
-                    }
-                    break
-
-                case "fanspeed":
-                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-
-                    // FanControl
-                    sendEvent(name: "speed", value: FanControlSpeed[value])
-
-                    // Google Fan Speed Percentages
-                    sendEvent(name: "fanspeedpercent", value: value*25, unit: "%", descriptionText: "Fan speed")
-
-                    if (value != 0)
-                    {
-                        // Save off the currently set fan speed, but only if non-zero.
-                        // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
-                        sendEvent(name: "fanspeedLast", value: value, descriptionText: "Last non-zero fanspeed")
-                    }
-                    break
-
-                case "setpoint":
-                    // This is actually celsius * 100...
-                    sendEvent(name: param, value: value, unit: "°C * 100", descriptionText: "Raw fireplace poll data")
-                
-                    if (value != 0)
-                    {
-                        // Only update these events if we have a valid setpoint.  The app turns off the thermostat by setting it to 0, but
-                        // we'll try to restore the previous setpoint automatically.
-                        sendEvent(name: "setpointLast", value: value, unit: "°C * 100", descriptionText: "Last non-zero setpoint")
-
-                        // ThermostatHeatingSetpoint
-                        sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(value/100), unit: "°${getTemperatureScale()}")
-
-                        // ThermostatSetpoint
-                        sendEvent(name: "thermostatSetpoint", value: convertCelsiusToUserTemperature(value/100), unit: "°${getTemperatureScale()}")
-                    }
-                    break
-                    
-                case "height":
-                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-
-                    // SwitchLevel
-                    sendEvent(name: "level", value: value*25, unit: "%", descriptionText: "Flame height")
-                    break
-
-                case "errors":
-                    // First convert the error integers into short error code strings for our attributes.
-                    def errorList = []
-                    value.each { errorInt -> errorList << ERROR_MESSAGE_VALUE_MAP[errorInt] }
-                    sendEvent(name: "errors", value: errorList)
-                    
-                    // Now output the error messages to the log.
-                    errorList.each { errorCode -> log.error "${ERROR_MESSAGES[errorCode]}" }
-                    break
-
-                // Flame is on
-                case "power":
-                    powerStatus = value
-                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-                    break;
-
-                // Thermostat is controlling flame power
-                case "thermostat":
-                    thermostatStatus = value
-                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-                    break;
-
-                case "light":
-                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-
-                    if (value != 0)
-                    {
-                        // Only save the light value if it's not off.  Used to restore the light when
-                        // issued a simple "lightOn" request.
-                        sendEvent(name: "lightLast", value: value, descriptionText: "Last non-zero light value")
-                    }
-
-                    // Notify any child devices implementing Light control
-                    try
-                    {
-                        getChildDevices()?.each
-                        {
-                            if (it.hasCapability("Light"))
-                            {
-                                it.setLightLevelFromParent(value)
-                            }
-                        }
-                    } catch (err) {
-                        logDebug "Either no children exist or error finding child devices for some reason: ${err}"
-                    }
-                    break
-
-                // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
-                case "pilot":                   // Cold-weather pilot light is enabled
-                case "timer":                   // Timer is activated
-                case "timeremaining":           // Seconds until timer turns off fireplace
-                //case "name":                  // Blank on my fireplace
-                case "serial":                  // Device unique serial (used for identification)
-                //case "battery":               // Emergency battery level (USB-C connection)
-                case "feature_light":           // Does this fireplace have a light?
-                //case "feature_thermostat":    // Does this fireplace have a thermostat and temperature data?
-                //case "power_vent":            // Does this fireplace have a power vent?
-                //case "feature_fan":           // Does this fireplace have a fan?
-                //case "fw_version":            // Numeric firmware version (not useful)
-                //case "fw_ver_string":         // String firmware version
-                //case "downtime":              // unknown
-                //case "uptime":                // Time fireplace has been on internet
-                //case "connection_quality":    // Connection quality of thermostat remote
-                //case "ecm_latency":           // unknown
-                //case "ipv4_address":          // We already know this.  Can't talk to the fireplace without it.                
-                    sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
-                    break
-            }
-        }
-
-        // Switch
-        // If 'thermostat' is on, it will toggle 'power' to turn the flame on and off according to room temperature.
-        // From a practical control perspective, we should consider the fireplace to be "on" while the thermostat is
-        // in control, regardless of actual flame state.
-        def previousSwitchStatus = device.currentValue("switch")
-        def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
-        sendEvent(name: "switch", value: switchStatus, descriptionText:"power or thermostat is on")
-
-        if (switchStatus != previousSwitchStatus || forceSchedule)
+        if (state.isUsingCloud)
         {
-            if (switchStatus == "on")
+            log.info "Switching to CLOUD control."
+            unschedule("refresh")
+            state.loginChanged = false
+            cloudPollStart()
+            runEvery1Minute("cloudLongPollMonitor")
+        }
+        else
+        {
+            log.info "Switching to LOCAL control."
+            unschedule("cloudLongPollMonitor")
+            localPoll(forceSchedule: true)
+        }
+    }
+}
+
+void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
+{
+    synchronized(this)
+    {
+        def wasLoggedIn = state.isLoggedIn
+        state.isLoggedIn = isLoggedIn
+        if (state.isUsingCloud && !initialization)
+        {
+            logDebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedIn -> $isLoggedIn)"
+
+            if (isLoggedIn && !wasLoggedIn)
             {
-                log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
-                runEvery5Minutes("refresh")
+                log.info "Restarting cloud polling since we've signed back in."
+                cloudPollStart()
             }
             else
             {
-                log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
-                runEvery15Minutes("refresh")
+                // Used to trigger a restart of the async loop.
+                state.loginChanged = true
             }
         }
     }
 }
+
+//===========
+// FAN SPEED
+//===========
 
 // Google Home Community
 void setSpeedPercentage(fanspeedPercentage)
@@ -362,6 +190,11 @@ void setSpeedPercentage(fanspeedPercentage)
 void setSpeed(String fanspeed)
 {
     // Set the fan speed.
+    setSpeedInternal(getSpeedFromString(fanspeed))
+}
+
+int getSpeedFromString(String fanspeed)
+{
     int fanspeedInt = 0
 
     int fanspeedCount = FanControlSpeed.size()
@@ -373,7 +206,7 @@ void setSpeed(String fanspeed)
         }
     }
 
-    setSpeedInternal(fanspeedInt)
+    return fanspeedInt
 }
 
 void setSpeedInternal(int fanspeed)
@@ -381,20 +214,20 @@ void setSpeedInternal(int fanspeed)
     // Explicitly set Last fan speed here.
     // Ensures that if we turn off the fan, we don't try to restore it later.
     // Also ensures we save the fan speed changes while the flame is currently off due to thermostat control.
-    sendEvent(name: "fanspeedLast", value: 0, descriptionText: "Last non-zero fanspeed")
+    state.fanspeedLast = 0
     
-    sendLocalCommand("FAN_SPEED", fanspeed)
+    sendCommand("FAN_SPEED", fanspeed)
 }
 
 void restoreFanSpeed()
 {
-    int fanspeedLast = device.currentValue("fanspeedLast") ?: 0
+    int fanspeedLast = state.fanspeedLast ?: 0
     if (fanspeedLast != 0)
     {
         logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
 
         refresh()
-        if (device.currentValue("fanspeed") == 0)
+        if (device.currentValue("speed", true) == FanControlSpeed[0])
         {
             log.info "Restoring fan speed to $fanspeedLast"
             setSpeedInternal(fanspeedLast)
@@ -408,7 +241,8 @@ void cycleSpeed()
     // Poll to get current value, then update to next value
     refresh()
     
-    int newFanspeed = (device.currentValue("fanspeed") ?: 0) + 1
+    int currentFanspeed = getSpeedFromString(device.currentValue("speed", true) ?: FanControlSpeed[0])
+    int newFanspeed = currentFanspeed + 1
     if (newFanspeed >= FanControlSpeed.size())
     {
         newFanspeed = 0
@@ -416,6 +250,10 @@ void cycleSpeed()
 
     setSpeedInternal(newFanspeed)
 }
+
+//========
+// SWITCH
+//========
 
 // Switch
 void on()
@@ -433,25 +271,27 @@ void on()
     }
     else
     {
-        sendLocalCommand("POWER", 1)
+        sendCommand("POWER", 1)
     }
 }
 
-// Switch
+// Switch (and ThermostateMode)
 void off()
 {
     unschedule("restoreFanSpeed")
 
     // Turn off all modes.
-    sendLocalCommand("POWER", 0)
+    sendCommand("POWER", 0)
 }
 
-// Google Home Community (Thermostat Mode)
-void setOnOff(enabled)
+//====================
+// THERMOSTAT CONTROL
+//====================
+def setThermostatMode(thermostatmode)
 {
-    if (enabled == "on")
+    if (thermostatmode == "heat")
     {
-        on()
+        heat()
     }
     else
     {
@@ -459,24 +299,17 @@ void setOnOff(enabled)
     }
 }
 
+def heat()
+{
+    on()
+}
+
 // ThermostatHeatingSetpoint
 void setHeatingSetpoint(temperature)
 {
     // Set thermostat temperature
     def setpoint = convertUserTemperatureToCelsius(temperature) * 100
-    sendLocalCommand("THERMOSTAT_SETPOINT", setpoint)
-}
-
-void beep()
-{
-    // Beep!  (...if it would actually beep.)
-    sendLocalCommand("BEEP", 1)
-}
-
-void setPilotLight(enabled)
-{
-    // Enable/disable cold weather pilot light
-    sendLocalCommand("PILOT", OnOffValue[enabled])
+    sendCommand("THERMOSTAT_SETPOINT", setpoint)
 }
 
 void setThermostatControl(enabled)
@@ -488,23 +321,53 @@ void setThermostatControl(enabled)
     {
         // If not set (such as first run), set this to something reasonable so the flame comes on if the room is cold.
         // Default value on the remote is 72F (22C).
-        setPointValue = device.currentValue("setpointLast") ?: 2200
+        setPointValue = state.setpointLast ?: 2200
     }
 
-    logDebug "setThermostatControl THERMOSTAT_SETPOINT $setPointValue"
-    sendLocalCommand("THERMOSTAT_SETPOINT", setPointValue)
+    sendCommand("THERMOSTAT_SETPOINT", setPointValue)
+}
+
+//=======
+// LIGHT
+//=======
+void createVirtualLightDevice(overrideHasLight = false)
+{
+    if (!overrideHasLight && !state.hasLight)
+    {
+        log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
+        return
+    }
+
+    def serial = state.serial
+    if (serial == null)
+    {
+        log.error "No serial available.  Cannot create child Light device."
+        return
+    }
+
+    def fireplaceLightDni = "IntelliFireLight-$serial"
+
+    def childDevice = getChildDevice(fireplaceLightDni)
+    if (childDevice == null)
+    {
+        def myLabel = device.getLabel()
+        def childLabel = "$myLabel Light"
+
+        log.info "Creating new Light child device $childLabel"
+        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
+        childDevice.setLightLevelFromParent(device.currentValue("light"))
+    }
+    else
+    {
+        log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
+    }
 }
 
 // Light (via Light virtual device)
 void lightOn()
 {
     // Restore the previous light level.
-    def lightLevel = device.currentValue("lightLast")
-    if (lightLevel == null)
-    {
-        // If not yet set, set to max.
-        lightLevel = INTELLIFIRE_COMMANDS["LIGHT"].max
-    }
+    def lightLevel = state.lightLast ?:  INTELLIFIRE_COMMANDS["LIGHT"].max
     
     setLightLevel(lightLevel)
 }
@@ -519,7 +382,23 @@ void lightOff()
 void setLightLevel(level)
 {
     // Set light level 0-3
-    sendLocalCommand("LIGHT", level)
+    sendCommand("LIGHT", level)
+}
+
+//================
+// OTHER COMMANDS
+//================
+
+void beep()
+{
+    // Beep!  (...if it would actually beep.)
+    sendCommand("BEEP", 1)
+}
+
+void setPilotLight(enabled)
+{
+    // Enable/disable cold weather pilot light
+    sendCommand("PILOT", OnOffValue[enabled])
 }
 
 // SwitchLevel
@@ -539,21 +418,29 @@ void setLevel(level, duration = 0)
 void setFlameHeight(flameHeight)
 {
     // Set flame height 0-4
-    sendLocalCommand("FLAME_HEIGHT", flameHeight)
+    sendCommand("FLAME_HEIGHT", flameHeight)
 }
 
 void setTimer(minutes)
 {
     // Set Sleep timer (up to 3 hours)
     // Convert to seconds before sending to fireplace.
-    sendLocalCommand("TIME_REMAINING", minutes*60)
+    sendCommand("TIME_REMAINING", minutes*60)
 }
 
-int convertCelsiusToUserTemperature(celsiusTemperature)
+void softReset()
+{
+    sendCommand("SOFT_RESET", 1)
+}
+
+//===========
+// UTILITIES
+//===========
+def convertCelsiusToUserTemperature(celsiusTemperature)
 {
     if (getTemperatureScale() == "F")
     {
-        return Math.round(celsiusToFahrenheit(celsiusTemperature))
+        return Math.round(celsiusToFahrenheit(celsiusTemperature.toBigDecimal()))
     }
     else
     {
@@ -561,17 +448,499 @@ int convertCelsiusToUserTemperature(celsiusTemperature)
     }
 }
 
-int convertUserTemperatureToCelsius(userTemperature)
+def convertUserTemperatureToCelsius(userTemperature)
 {
     if (getTemperatureScale() == "F")
     {
         // The ECM or remote is truncating here, not rounding.
         // Copying that behavior here for consistency, as maddening as that is...
-        return fahrenheitToCelsius(userTemperature)
+        return (int)fahrenheitToCelsius(userTemperature.toBigDecimal())
     }
     else
     {
         return userTemperature
+    }
+}
+
+//===================
+// REFRESH (POLLING)
+//===================
+void refresh(forceSchedule = false)
+{
+    if (!state.isUsingCloud)
+    {
+        localPoll()
+    }
+}
+
+void localPoll(forceSchedule = false)
+{
+    // Update current state from fireplace.
+    logVerbose "Refreshing status..."
+    synchronized(this)
+    {
+        httpGet("http://${settings.ipAddress}/poll")
+        { resp ->
+            logVerbose "localPoll Status ${resp.getStatus()}"
+            consumePollData(parseJson(resp.data.text), forceSchedule)
+        }
+    }
+}
+
+void cloudPollStart()
+{
+    def success = true
+
+    if (state.isLoggedIn == null)
+    {
+        log.error "Cloud control not initialized.  Open the Intellifire Manager App and confirm your credentials with the app once."
+        device.updateSetting("enableCloudControl", false)
+        updated()
+        return
+    }
+
+    if (!state.isUsingCloud)
+    {
+        logDebug "Aborting cloudPollStart since we're switching to local control."
+        return
+    }
+
+    if (!state.isLoggedIn)
+    {
+        logDebug "Aborting cloudPollStart since we aren't logged in."
+        return
+    }
+
+    def cloudPollUniqueId = updateCloudPollUniqueId()
+    logDebug "cloudPollStart($cloudPollUniqueId) Start"
+    state.cloudPollTimestamp = now()
+    state.loginChanged = false
+
+    def cookies = [ 'Cookie': parent.makeCookiesString() ]
+
+    log.debug "Refreshing full status from cloud..."
+    asynchttpGet(
+        cloudPollResult,
+        [
+            uri: "${parent.getRemoteServerRoot()}/${state.serial}/apppoll",
+            headers: cookies,
+        ],
+        [ 'cookies': cookies, 'cloudPollUniqueId': cloudPollUniqueId ])
+}
+
+void cloudPollResult(resp, data)
+{
+    def statusCode = resp.getStatus()
+    logDebug "cloudPollResult(${data['cloudPollUniqueId']}) Status $statusCode"
+
+    if (statusCode >= 200 && statusCode < 300)
+    {
+        consumePollData(parseJson(resp.data))
+        cloudLongPollStart(data['cookies'], data['cloudPollUniqueId'])
+    }
+    else
+    {
+        if (statusCode == 403)
+        {
+            log.error "Failed while issuing cloud poll command due to invalid credentials."
+            if (parent.refreshCredentials())
+            {
+                // If we successfully signed back in, try again.
+                state.loginChanged = false
+                cloudPollStart()  
+            }
+        }
+        else
+        {
+            log.error "Failed while issuing cloud poll command: Response $statusCode"
+        }
+
+        success = false
+    }
+}
+
+void cloudLongPollStart(cookies, cloudPollUniqueId)
+{
+    if (state.cloudPollUniqueId != cloudPollUniqueId)
+    {
+        logDebug "cloudLongPollStart: state.cloudPollUniqueId(${state.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
+        return
+    }
+
+    if (state.loginChanged)
+    {
+        if (state.loggedIn)
+        {
+            // Login credentials have changed or are no longer valid.  Try a normal poll again.
+            cloudPollStart()
+        }
+
+        return
+    }
+
+    logDebug "cloudLongPollStart($cloudPollUniqueId) Start"
+    state.cloudPollTimestamp = now()
+
+    asynchttpGet(
+        cloudLongPollResult,
+        [
+            uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
+            headers: [ 'Cookie': cookies ],
+            timeout: 63
+        ],
+        [ 'cookies': cookies, 'cloudPollUniqueId': cloudPollUniqueId ])
+}
+
+void cloudLongPollResult(resp, data)
+{
+    // Common ways this function ends:
+    // * Data changed
+    //      Status is 200 and headers contain a unique Etag.
+    //      Reaction: Issue a new long poll and send the Etag back.
+    // * Long Poll timeout
+    //      Status is 408 and headers contain a default Etag ("0:0")
+    //      Reaction: Issue a new long poll (with the previously good Etag if we had one) to resume.
+    // * Connection died
+    //      Status is 408 and headers do NOT contain an Etag.
+    //      Reaction: Restart polling with a normal poll first.
+    // * Other unexpected error
+    //      Status is anything else.
+    //      Reaction: Restart polling with a normal poll first.
+
+    logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
+
+    if (resp.getStatus() == 200)
+    {
+        logDebug "Received fireplace state update from cloud."
+        consumePollData(parseJson(resp.data))
+    }
+
+    // Now figure out which Poll request we should send (if any)
+    if (state.cloudPollUniqueId != data['cloudPollUniqueId'])
+    {
+        logDebug "cloudLongPollResult: state.cloudPollUniqueId(${state.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
+    }
+    else if (state.isUsingCloud && state.isLoggedIn)
+    {
+        def isExpectedResponse = false
+
+        if (resp.getStatus() == 200 || resp.getStatus() == 408)
+        {
+            // The connection dying looks a lot like a normal timeout, so look to see if the cloud sent us an Etag.
+            // If we don't see one, then the connection was terminated by us rather than the cloud.
+            def incomingHeaders = resp.getHeaders()
+            if (incomingHeaders != null && incomingHeaders.containsKey('Etag'))
+            {
+                // This is normal behavior, so continue with long polls.
+                isExpectedResponse = true
+
+                if (resp.getStatus() == 200)
+                {
+                    // Need to send the Etag back to avoid getting the same data again.
+                    data['Etag'] = incomingHeaders['Etag']
+                    logDebug "Etag = ${data['Etag']}"
+                }
+            }
+        }
+
+        if (isExpectedResponse && !state.loginChanged)
+        {
+            logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
+            state.cloudPollTimestamp = now()
+
+            def outgoingHeaders = [ 'Cookie': data['cookies'] ]
+            if (data.containsKey('Etag'))
+            {
+                outgoingHeaders['If-None-Match'] = data['Etag']
+            }
+
+            asynchttpGet(
+                cloudLongPollResult,
+                [
+                    uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
+                    headers: outgoingHeaders,
+                    timeout: 63
+                ],
+                data)
+        }
+        else
+        {
+            def retryDelayMilliseconds = 60000 - (now() - state.cloudPollTimestamp)
+
+            if (!isExpectedResponse)
+            {
+                def delayString = ""
+                def retryDelaySeconds = (int)(retryDelayMilliseconds / 1000)
+                if (retryDelaySeconds > 0)
+                {
+                    delayString = " in $retryDelaySeconds seconds"
+                }
+
+                log.warn "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll$delayString."
+            }
+
+            if (retryDelayMilliseconds > 0)
+            {
+                runInMillis(retryDelayMilliseconds, "cloudPollStart")
+            }
+            else
+            {
+                cloudPollStart()
+            }
+        }
+    }
+}
+
+void cloudLongPollMonitor()
+{
+    synchronized(this)
+    {
+        logVerbose "cloudLongPollMonitor checking..."
+        if (state.isUsingCloud && state.isLoggedIn)
+        {
+            // If we haven't had a successfull long poll for a while,
+            // do a full poll reset.
+            def currentTime = now()
+
+            if (state.cloudPollTimestamp + 120000 < currentTime)
+            {
+                log.warn "Cloud long polling appears to have stalled. Restarting..."
+                cloudPollStart()
+            }
+        }
+    }
+}
+
+// Generates a unique id to help enforce only one cloud poll loop is running.
+def updateCloudPollUniqueId()
+{
+    synchronized (state)
+    {
+        state.cloudPollUniqueId = (state.cloudPollUniqueId ?: 0) + 1
+        return state.cloudPollUniqueId
+    }
+}
+
+void consumePollData(pollDataMap, forceSchedule = false)
+{                    
+    // To set the Switch status properly, we need to store the new power and thermostat status
+    // within this function, since events don't immediately apply.  May as well intialize them
+    // with current status, even though they should always be set during refresh...
+    def powerStatus = device.currentValue("power")
+    def thermostatStatus = device.currentValue("thermostat")
+
+    log.debug "$pollDataMap"
+    pollDataMap.each
+    { param, value ->
+        //logVerbose "Processing $param = $value"
+
+        // During local polling, most values are integers.  But during cloud polling, these are strings.
+        // Integers are more useful to us, so try to provide an integer version of all data, for the
+        // params that need it.
+        int valueInt = -1
+        try { valueInt = value.toInteger() } catch (e) {}
+        
+        switch (param) {
+            case "temperature":
+                // Thermostat data sometimes cuts out, so only send temperature events if the data is valid...
+                if (pollDataMap.get("feature_thermostat", 0).toInteger() != 0)
+                {
+                    // TemperatureMeasurement
+                    sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(valueInt), unit: "°${getTemperatureScale()}", descriptionText: "Room temperature")
+                }
+                break
+
+            case "fanspeed":
+                // FanControl
+                sendEvent(name: "speed", value: FanControlSpeed[valueInt], descriptionText: "Fan speed")
+
+                // Google Fan Speed Percentages
+                sendEvent(name: "fanspeedPercent", value: valueInt*25, unit: "%", descriptionText: "Fan speed")
+
+                if (valueInt != 0)
+                {
+                    // Save off the currently set fan speed, but only if non-zero.
+                    // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
+                    state.fanspeedLast = valueInt
+                }
+                break
+
+            case "setpoint":
+                // This is actually celsius * 100...
+                if (valueInt != 0)
+                {
+                    // Only update these events if we have a valid setpoint.  The app turns off the thermostat by setting it to 0, but
+                    // we'll try to restore the previous setpoint automatically.
+                    state.setpointLast = valueInt
+
+                    // ThermostatHeatingSetpoint
+                    sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
+
+                    // ThermostatSetpoint
+                    sendEvent(name: "thermostatSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
+                }
+                break
+                
+            case "height":
+                sendEvent(name: param, value: valueInt, descriptionText: "Flame height")
+
+                // SwitchLevel
+                sendEvent(name: "level", value: valueInt*25, unit: "%", descriptionText: "Flame height")
+                break
+
+            case "errors":
+                // First convert the error integers into short error code strings for our attributes.
+                def errorList = []
+                value.each { errorInt -> errorList << ERROR_MESSAGE_VALUE_MAP[errorInt] }
+                sendEvent(name: "errors", value: errorList)
+                
+                // Now output the error messages to the log.
+                errorList.each { errorCode -> log.error "${ERROR_MESSAGES[errorCode]}" }
+                break
+
+            // Flame is on
+            case "power":
+                powerStatus = valueInt
+                sendEvent(name: param, value: valueInt, descriptionText: "Flame is ignited")
+                break;
+
+            // Thermostat is controlling flame power
+            case "thermostat":
+                thermostatStatus = valueInt
+                sendEvent(name: param, value: valueInt, descriptionText: "Thermostat is controlling the flame")
+                break;
+
+            case "light":
+                sendEvent(name: param, value: valueInt, descriptionText: "Light is on")
+
+                if (valueInt != 0)
+                {
+                    // Only save the light value if it's not off.  Used to restore the light when
+                    // issued a simple "lightOn" request.
+                    state.lightLast = valueInt
+                }
+
+                // Notify any child devices implementing Light control
+                getChildDevices()?.each
+                {
+                    if (it.hasCapability("Light"))
+                    {
+                        it.setLightLevelFromParent(valueInt)
+                    }
+                }
+                break
+
+            case "ipv4_address":
+                if ((settings.ipAddress ?: "") != value)
+                {
+                    log.info "Updating ipAddress to $value"
+                    device.updateSetting("ipAddress", value)
+                }
+                break
+
+            // Device unique serial (used for identification)
+            case "serial":
+                if ((state.serial ?: "") != value)
+                {
+                    state.serial = value
+                }
+                break
+
+            // Does this fireplace have a light?
+            case "feature_light":
+                state.hasLight = (valueInt != 0)
+                break
+
+            case "pilot":
+                sendEvent(name: param, value: valueInt, descriptionText: "Cold Climate pilot light enabled")
+                break
+
+            case "prepurge":
+                sendEvent(name: param, value: valueInt, descriptionText: "2-minute pre-purge before flame ignites (Power Vent only)")
+                break
+
+            case "hot":
+                sendEvent(name: param, value: valueInt, descriptionText: "Fireplace hot sensor")
+                break
+
+            case "timer":
+                sendEvent(name: param, value: valueInt, descriptionText: "Timer is active")
+                break
+
+            // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
+            //case "timeremaining":             // Seconds until timer turns off fireplace (doesn't get updated frequently enough)
+            //case "name":                      // Blank on my fireplace
+            //case "battery":                   // Emergency battery level (USB-C connection)
+            //case "secondary_burner":          // Secondary burner active (?)
+            //case "ember_lights":              // Ember lights active (?)
+            //case "colored_lights":            // Colored lights active (?)
+            //case "hm_1":                      // Unknown
+            //case "hm_2":                      // Unknown
+            //case "hm_3":                      // Unknown
+            //case "hm_4":                      // Unknown
+            //case "feature_thermostat":        // Does this fireplace have a thermostat and temperature data?
+            //case "power_vent":                // Does this fireplace have a power vent?
+            //case "feature_fan":               // Does this fireplace have a fan?
+            //case "feature_secondary_burner":  // Does this fireplace have a secondary burner?
+            //case "feature_ember_lights":      // Does this fireplace have ember lights?
+            //case "feature_colored_lights":    // Does this fireplace have colored lights?
+            //case "feature_hm_1":              // Does this fireplace have hm_1?
+            //case "feature_hm_2":              // Does this fireplace have hm_2?
+            //case "feature_hm_3":              // Does this fireplace have hm_3?
+            //case "feature_hm_4":              // Does this fireplace have hm_4?
+            //case "fw_version":                // Numeric firmware version (not useful)
+            //case "fw_ver_string":             // String firmware version
+            //case "downtime":                  // Unknown
+            //case "uptime":                    // Time fireplace has been on internet
+            //case "connection_quality":        // Connection quality of thermostat remote
+            //case "ecm_latency":               // Unknown
+                // sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                // break
+        }
+    }
+
+    // Switch
+    // If 'thermostat' is on, it will toggle 'power' to turn the flame on and off according to room temperature.
+    // From a practical control perspective, we should consider the fireplace to be "on" while the thermostat is
+    // in control, regardless of actual flame state.
+    def previousSwitchStatus = device.currentValue("switch")
+    def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
+    sendEvent(name: "switch", value: switchStatus, descriptionText:"power or thermostat is on")
+
+    // ThermostatMode
+    // We've tied "heat" vs "off" to the switch value.
+    sendEvent(name: "thermostatMode", value: (switchStatus == "on") ? "heat" : "off", descriptionText:"Hubitat Thermostat mode")
+
+    if (!state.isUsingCloud)
+    {
+        if (switchStatus != previousSwitchStatus || forceSchedule)
+        {
+            if (switchStatus == "on")
+            {
+                log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
+                runEvery5Minutes("refresh")
+            }
+            else
+            {
+                log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
+                runEvery15Minutes("refresh")
+            }
+        }
+    }
+}
+
+//==============
+// SEND COMMAND
+//==============
+def sendCommand(command, value)
+{
+    if (state.isUsingCloud)
+    {
+        return sendCloudCommand(command, value)
+    }
+    else
+    {
+        return sendLocalCommand(command, value)
     }
 }
 
@@ -585,55 +954,130 @@ def sendLocalCommand(command, value)
         return
     }
 
-    log.info "Sending command ${commandSpec.localCommand} = $value"
+    log.info "Sending local command ${commandSpec.localCommand} = $value"
 
     def commandData = "command=${commandSpec.localCommand}&value=$value"
     def payload = "post:$commandData"
     def apiKeyBytes = HexUtils.hexStringToByteArray(settings.apiKey)
     
-    def challengeBytes = HexUtils.hexStringToByteArray(getChallenge())
+    synchronized(this)
+    {
+        def challengeBytes = HexUtils.hexStringToByteArray(getChallenge())
 
-    def digest = java.security.MessageDigest.getInstance("SHA-256")
-    digest.update(apiKeyBytes)
-    digest.update(challengeBytes)
-    digest.update(payload.getBytes())
-    def payloadHash = digest.digest()
-    
-    digest.reset()
-    digest.update(apiKeyBytes)
-    digest.update(payloadHash)
-    def response = HexUtils.byteArrayToHexString(digest.digest())
+        def digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(apiKeyBytes)
+        digest.update(challengeBytes)
+        digest.update(payload.getBytes())
+        def payloadHash = digest.digest()
 
-    def data = "$commandData&user=${settings.userId}&response=$response"
-    def url = "http://${settings.ipAddress}/post"
-        
-    httpPost([
-        uri: url,
-        body: data,
-        timeout: 5
-    ])
-    { resp ->
-        logDebug "Status ${resp.getStatus()}"        
-        logDebug "Data: ${resp.data}"
+        digest.reset()
+        digest.update(apiKeyBytes)
+        digest.update(payloadHash)
+        def response = HexUtils.byteArrayToHexString(digest.digest())
+
+        def data = "$commandData&user=${settings.userId}&response=$response"
+        def url = "http://${settings.ipAddress}/post"
+
+        httpPost([
+            uri: url,
+            body: data,
+            timeout: 5
+        ])
+        { resp ->
+            //logVerbose "Status ${resp.getStatus()}"        
+            //logVerbose "Data: ${resp.data}"
+        }
     }
 
-    // Force a refresh a few seconds after the command.
-    // This needs to be short enough so Google can get a response before timing out,
-    // but long enough to not soft-lock the fireplace.
-    runIn(3, "refresh", [overwrite: true, data: [forceSchedule: true]])
+    if (!state.isUsingCloud)
+    {
+        // Force a refresh a few seconds after the command.
+        // This needs to be short enough so Google can get a response before timing out,
+        // but long enough to not soft-lock the fireplace.
+        runIn(3, "refresh", [overwrite: true, data: [forceSchedule: true]])
+    }
 }
 
 def getChallenge()
 {
     httpGet(uri: "http://${settings.ipAddress}/get_challenge")
     { resp ->
-        logDebug "Status ${resp.getStatus()}"
+        //logVerbose "Status ${resp.getStatus()}"
         challenge = resp.data.text
-        logDebug "Challenge $challenge"
+        //logVerbose "Challenge $challenge"
     }
 
     return challenge
 }
+
+def sendCloudCommand(command, value)
+{
+    if (!state.isLoggedIn)
+    {
+        log.warn "Aborting cloud command $command since we aren't logged in."
+        return false
+    }
+
+    def success= false
+    def commandSpec = INTELLIFIRE_COMMANDS[command]
+
+    if (value < commandSpec.min || value > commandSpec.max)
+    {
+        log.error "Command $command has value $value out of range [${commandSpec.min},${commandSpec.max}].  Ignoring..."
+        return
+    }
+
+    log.info "Sending cloud command ${commandSpec.cloudCommand} = $value"
+
+    try
+    {
+        httpPost([
+                uri: "${parent.getRemoteServerRoot()}/${state.serial}/${settings.apiKey}/apppost",
+                headers: [ 'Cookie': parent.makeCookiesString() ],
+                body: "${commandSpec.cloudCommand}=$value",
+                timeout: 10
+            ])
+        { resp ->
+            def responseStatus = resp.status
+            //logVerbose "Status $responseStatus"
+            //logVerbose "Data: ${resp.data}"
+            success = true
+        }
+    }
+    catch (HttpResponseException e)
+    {
+        def statusCode = e.getStatusCode()
+
+        if (statusCode == 403)
+        {
+            log.error "Failed while issuing command '${commandSpec.cloudCommand}' due to invalid credentials.  Attempting to refresh."
+            
+            if (parent.refreshCredentials())
+            {                
+                sendCloudCommand(command, value)
+            }
+        }
+        else
+        {
+            log.error "Failed while issuing command '${commandSpec.cloudCommand}': Response $statusCode"
+        }
+
+        success = false
+    }
+
+    return success
+}
+
+//==================
+// GLOBAL CONSTANTS
+//==================
+
+@Field Map LogDebugLevel =
+[
+    "off": 0,
+    "debug": 1,
+    "verbose": 2
+]
 
 // Subset of officially supported FanControl speed names.
 @Field FanControlSpeed =
@@ -649,6 +1093,12 @@ def getChallenge()
 [
     "off": 0,
     "on": 1
+]
+
+@Field ThermostatMode =
+[
+    "off",
+    "heat"
 ]
 
 @Field
@@ -698,20 +1148,20 @@ private static final INTELLIFIRE_COMMANDS =
     ],
     "THERMOSTAT_SETPOINT":
     [
-        cloudCommand: "thermostat_setpoint",
+        cloudCommand: "setpoint",
         localCommand: "thermostat_setpoint",
         min: 0,
         max: 3700 // 37°C
     ],  // 0 = disable thermostat
     "TIME_REMAINING":
     [
-        cloudCommand: "time_remaining",
+        cloudCommand: "timeremaining",
         localCommand: "time_remaining",
         min: 0,
         max: 10800
     ],  // multiples of 60 - 0 = disable
     "SOFT_RESET":
-    [  // This can be used to "soft reset the unit" -> probably dont ever need it.
+    [  // This can be used to "soft reset the unit"
         cloudCommand: "soft_reset",
         localCommand: "reset",  // Unaware of the local command for this one here
         min: 1,
@@ -750,5 +1200,5 @@ private static final ERROR_MESSAGES =
     "ACCESSORY":     "Your appliance has detected that an AUX port or accessory is not functional. Please contact your dealer and report this issue.",
     "SOFT_LOCK_OUT": "Sorry your appliance did not start. Try again by pressing Flame ON.",
     "OFFLINE":       "Your appliance is currently offline.",
-    "ECM_OFFLINE":   "ECM is offline.",
+    "ECM_OFFLINE":   "ECM is offline.  You may need to power cycle your WiFi module.",
 ].withDefault { otherError -> "Unknown Error. ($otherError)" }
