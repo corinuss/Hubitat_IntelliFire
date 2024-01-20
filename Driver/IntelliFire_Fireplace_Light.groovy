@@ -28,8 +28,6 @@
  *
  *  Change Log:
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
- *    11/15/2023 v1.1.1   - Fixed the description text in events.
- *    11/12/2023 v1.1.0   - Initial version of Light virtual device.
  */
 
 metadata

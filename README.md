@@ -57,7 +57,7 @@ The following Hubitat capabilities are supported and map to these Fireplace feat
 
 ### IntelliFire Fireplace
 **FanControl** - Controls the fan.
-**Refresh** - Forces an immediate refresh of fireplace state. (Local control only)
+**Refresh** - Forces an immediate refresh of fireplace state.
 **Switch** - Turns the fireplace on and off.  By default will also autoamtically restore the thermostat setting.
 **SwitchLevel** - Controls flame height.
 **TemperatureMeasurement** - Reports the current room temperature as seen by the fireplace.
@@ -67,7 +67,7 @@ The following Hubitat capabilities are supported and map to these Fireplace feat
 
 ### IntelliFire Fireplace Virtual Light
 **Light** - Turns the light on/off.
-**Refresh** - Forces an immediate refresh of light state. (Local control only)
+**Refresh** - Forces an immediate refresh of light state.
 **Switch** - Turns the light on/off. (Identical to Light)
 **SwitchLevel** - Controls the light level (dimmer)
 

@@ -25,21 +25,8 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    01/20/2024 v2.0.1   - Manual Refresh safely works for Cloud control.  Also cleaning up a few log messages.
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
- *    11/15/2023 v1.1.1   - Restored setOnOff.  It's needed for the Google Home Community integration.  Oops.
- *                          Fixed the description text in events.
- *    11/12/2023 v1.1.0   - Adding feature to enforce the previous fan setting is actually restored when turning on the fireplace.
- *                          Initial version of Light virtual device.
- *                          Made singleThreaded to attempt to reduce soft-locks possibly caused by simulanteous communications with fireplace.
- *                          Removed redundant setOnOff command.
- *    09/25/2023 v1.0.0   - Bumping version to 1.0.  Happy with this release.
- *    09/25/2023 v0.6.0   - Flame height controllable via SwitchLevel.
- *                          Google Home Community can now control the fireplace thermostat and fan.
- *    07/19/2022 v0.5.0   - Minor fixes to support the IntelliFire Fireplace Manager app and Google Home Community (WIP)
- *    07/04/2022 v0.4.0   - Error states now reported.  Also filter out temporarily-bad temperature data.
- *    07/03/2022 v0.3.0   - Automatic polling.
- *    07/03/2022 v0.2.0   - Added manual Polling.  Added a few missing commands.  On() can restore previous thermostat mode.  Code cleanup.
- *    06/22/2022 v0.1.0   - Initial publish.  Basic commands implemented but not stable.
  */
 
 import groovy.transform.Field
@@ -130,15 +117,15 @@ void configure()
 
 void updated()
 {
-    if (state.isUsingCloud == null || state.isUsingCloud != settings.enableCloudControl)
+    if (atomicState.isUsingCloud == null || atomicState.isUsingCloud != settings.enableCloudControl)
     {
-        state.isUsingCloud = settings.enableCloudControl
+        atomicState.isUsingCloud = settings.enableCloudControl
 
-        if (state.isUsingCloud)
+        if (atomicState.isUsingCloud)
         {
             log.info "Switching to CLOUD control."
-            unschedule("refresh")
-            state.loginChanged = false
+            unschedule("localPoll")
+            atomicState.loginChanged = false
             cloudPollStart()
             runEvery1Minute("cloudLongPollMonitor")
         }
@@ -148,6 +135,9 @@ void updated()
             unschedule("cloudLongPollMonitor")
             localPoll(forceSchedule: true)
         }
+
+        // Compatibility for transitioning periodic refresh calls to localPoll calls.
+        unschedule("refresh")
     }
 }
 
@@ -155,11 +145,11 @@ void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
 {
     synchronized(this)
     {
-        def wasLoggedIn = state.isLoggedIn
-        state.isLoggedIn = isLoggedIn
-        if (state.isUsingCloud && !initialization)
+        def wasLoggedIn = atomicState.isLoggedIn
+        atomicState.isLoggedIn = isLoggedIn
+        if (atomicState.isUsingCloud && !initialization)
         {
-            logDebug "Login change ($loginUniqueId).  state.isLoggedin ($wasLoggedIn -> $isLoggedIn)"
+            logDebug "Login change ($loginUniqueId).  atomicState.isLoggedin ($wasLoggedIn -> $isLoggedIn)"
 
             if (isLoggedIn && !wasLoggedIn)
             {
@@ -169,7 +159,7 @@ void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
             else
             {
                 // Used to trigger a restart of the async loop.
-                state.loginChanged = true
+                atomicState.loginChanged = true
             }
         }
     }
@@ -214,19 +204,19 @@ void setSpeedInternal(int fanspeed)
     // Explicitly set Last fan speed here.
     // Ensures that if we turn off the fan, we don't try to restore it later.
     // Also ensures we save the fan speed changes while the flame is currently off due to thermostat control.
-    state.fanspeedLast = 0
+    atomicState.fanspeedLast = 0
     
     sendCommand("FAN_SPEED", fanspeed)
 }
 
 void restoreFanSpeed()
 {
-    int fanspeedLast = state.fanspeedLast ?: 0
+    int fanspeedLast = atomicState.fanspeedLast ?: 0
     if (fanspeedLast != 0)
     {
         logDebug "Previous fan speed $fanspeedLast saved.  Checking current fan speed to see if restoration is needed."
 
-        refresh()
+        localPoll()
         if (device.currentValue("speed", true) == FanControlSpeed[0])
         {
             log.info "Restoring fan speed to $fanspeedLast"
@@ -239,7 +229,7 @@ void restoreFanSpeed()
 void cycleSpeed()
 {
     // Poll to get current value, then update to next value
-    refresh()
+    localPoll()
     
     int currentFanspeed = getSpeedFromString(device.currentValue("speed", true) ?: FanControlSpeed[0])
     int newFanspeed = currentFanspeed + 1
@@ -315,13 +305,13 @@ void setHeatingSetpoint(temperature)
 void setThermostatControl(enabled)
 {
     // Enable/disable Thermostat mode
-    refresh()
+    localPoll()
     int setPointValue = 0
     if (OnOffValue[enabled])
     {
         // If not set (such as first run), set this to something reasonable so the flame comes on if the room is cold.
         // Default value on the remote is 72F (22C).
-        setPointValue = state.setpointLast ?: 2200
+        setPointValue = atomicState.setpointLast ?: 2200
     }
 
     sendCommand("THERMOSTAT_SETPOINT", setPointValue)
@@ -332,13 +322,13 @@ void setThermostatControl(enabled)
 //=======
 void createVirtualLightDevice(overrideHasLight = false)
 {
-    if (!overrideHasLight && !state.hasLight)
+    if (!overrideHasLight && !atomicState.hasLight)
     {
         log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
         return
     }
 
-    def serial = state.serial
+    def serial = atomicState.serial
     if (serial == null)
     {
         log.error "No serial available.  Cannot create child Light device."
@@ -367,7 +357,7 @@ void createVirtualLightDevice(overrideHasLight = false)
 void lightOn()
 {
     // Restore the previous light level.
-    def lightLevel = state.lightLast ?:  INTELLIFIRE_COMMANDS["LIGHT"].max
+    def lightLevel = atomicState.lightLast ?:  INTELLIFIRE_COMMANDS["LIGHT"].max
     
     setLightLevel(lightLevel)
 }
@@ -462,27 +452,55 @@ def convertUserTemperatureToCelsius(userTemperature)
     }
 }
 
+def httpResponseToString(responseCode)
+{
+    def responseString = "Response $responseCode"
+    switch (responseCode)
+    {
+        case 401:
+            responseString = "Unauthorized (Invalid Credentials)"
+            break;
+        case 403:
+            responseString = "Forbidden (Invalid Credentials)"
+            break;
+        case 408:
+            responseString = "Server timed out"
+            break;
+        case 502:
+            responseString = "Bad Gateway (Server error)"
+    }
+
+    return responseString
+}
+
 //===================
 // REFRESH (POLLING)
 //===================
 void refresh(forceSchedule = false)
 {
-    if (!state.isUsingCloud)
+    if (atomicState.isUsingCloud)
+    {
+        cloudPollStart()
+    }
+    else
     {
         localPoll()
     }
 }
 
-void localPoll(forceSchedule = false)
+void localPoll(forceSchedule = false, forcePoll = false)
 {
-    // Update current state from fireplace.
-    logVerbose "Refreshing status..."
-    synchronized(this)
+    if (!atomicState.isUsingCloud || forcePoll)
     {
-        httpGet("http://${settings.ipAddress}/poll")
-        { resp ->
-            logVerbose "localPoll Status ${resp.getStatus()}"
-            consumePollData(parseJson(resp.data.text), forceSchedule)
+        // Update current state from fireplace.
+        logVerbose "Refreshing status..."
+        synchronized(this)
+        {
+            httpGet("http://${settings.ipAddress}/poll")
+            { resp ->
+                logVerbose "localPoll Status ${resp.getStatus()}"
+                consumePollData(parseJson(resp.data.text), forceSchedule)
+            }
         }
     }
 }
@@ -491,7 +509,7 @@ void cloudPollStart()
 {
     def success = true
 
-    if (state.isLoggedIn == null)
+    if (atomicState.isLoggedIn == null)
     {
         log.error "Cloud control not initialized.  Open the Intellifire Manager App and confirm your credentials with the app once."
         device.updateSetting("enableCloudControl", false)
@@ -499,13 +517,13 @@ void cloudPollStart()
         return
     }
 
-    if (!state.isUsingCloud)
+    if (!atomicState.isUsingCloud)
     {
         logDebug "Aborting cloudPollStart since we're switching to local control."
         return
     }
 
-    if (!state.isLoggedIn)
+    if (!atomicState.isLoggedIn)
     {
         logDebug "Aborting cloudPollStart since we aren't logged in."
         return
@@ -513,16 +531,16 @@ void cloudPollStart()
 
     def cloudPollUniqueId = updateCloudPollUniqueId()
     logDebug "cloudPollStart($cloudPollUniqueId) Start"
-    state.cloudPollTimestamp = now()
-    state.loginChanged = false
+    atomicState.cloudPollTimestamp = now()
+    atomicState.loginChanged = false
 
     def cookies = [ 'Cookie': parent.makeCookiesString() ]
 
-    log.debug "Refreshing full status from cloud..."
+    log.info "Refreshing full status from cloud..."
     asynchttpGet(
         cloudPollResult,
         [
-            uri: "${parent.getRemoteServerRoot()}/${state.serial}/apppoll",
+            uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/apppoll",
             headers: cookies,
         ],
         [ 'cookies': cookies, 'cloudPollUniqueId': cloudPollUniqueId ])
@@ -536,6 +554,8 @@ void cloudPollResult(resp, data)
     if (statusCode >= 200 && statusCode < 300)
     {
         consumePollData(parseJson(resp.data))
+
+        log.info "Starting long polling for notifications of future status updates."
         cloudLongPollStart(data['cookies'], data['cloudPollUniqueId'])
     }
     else
@@ -546,13 +566,14 @@ void cloudPollResult(resp, data)
             if (parent.refreshCredentials())
             {
                 // If we successfully signed back in, try again.
-                state.loginChanged = false
+                atomicState.loginChanged = false
                 cloudPollStart()  
             }
         }
         else
         {
-            log.error "Failed while issuing cloud poll command: Response $statusCode"
+            def errorString = httpResponseToString(statusCode)
+            log.error "Failed while issuing cloud poll command: $errorString"
         }
 
         success = false
@@ -561,15 +582,15 @@ void cloudPollResult(resp, data)
 
 void cloudLongPollStart(cookies, cloudPollUniqueId)
 {
-    if (state.cloudPollUniqueId != cloudPollUniqueId)
+    if (atomicState.cloudPollUniqueId != cloudPollUniqueId)
     {
-        logDebug "cloudLongPollStart: state.cloudPollUniqueId(${state.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
+        logDebug "cloudLongPollStart: atomicState.cloudPollUniqueId(${atomicState.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
         return
     }
 
-    if (state.loginChanged)
+    if (atomicState.loginChanged)
     {
-        if (state.loggedIn)
+        if (atomicState.loggedIn)
         {
             // Login credentials have changed or are no longer valid.  Try a normal poll again.
             cloudPollStart()
@@ -579,12 +600,12 @@ void cloudLongPollStart(cookies, cloudPollUniqueId)
     }
 
     logDebug "cloudLongPollStart($cloudPollUniqueId) Start"
-    state.cloudPollTimestamp = now()
+    atomicState.cloudPollTimestamp = now()
 
     asynchttpGet(
         cloudLongPollResult,
         [
-            uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
+            uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/applongpoll",
             headers: [ 'Cookie': cookies ],
             timeout: 63
         ],
@@ -616,11 +637,11 @@ void cloudLongPollResult(resp, data)
     }
 
     // Now figure out which Poll request we should send (if any)
-    if (state.cloudPollUniqueId != data['cloudPollUniqueId'])
+    if (atomicState.cloudPollUniqueId != data['cloudPollUniqueId'])
     {
-        logDebug "cloudLongPollResult: state.cloudPollUniqueId(${state.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
+        logDebug "cloudLongPollResult: atomicState.cloudPollUniqueId(${atomicState.cloudPollUniqueId}) != cloudPollUniqueId(${data['cloudPollUniqueId']}).  Aborting this long poll."
     }
-    else if (state.isUsingCloud && state.isLoggedIn)
+    else if (atomicState.isUsingCloud && atomicState.isLoggedIn)
     {
         def isExpectedResponse = false
 
@@ -643,10 +664,10 @@ void cloudLongPollResult(resp, data)
             }
         }
 
-        if (isExpectedResponse && !state.loginChanged)
+        if (isExpectedResponse && !atomicState.loginChanged)
         {
             logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
-            state.cloudPollTimestamp = now()
+            atomicState.cloudPollTimestamp = now()
 
             def outgoingHeaders = [ 'Cookie': data['cookies'] ]
             if (data.containsKey('Etag'))
@@ -657,7 +678,7 @@ void cloudLongPollResult(resp, data)
             asynchttpGet(
                 cloudLongPollResult,
                 [
-                    uri: "${parent.getRemoteServerRoot()}/${state.serial}/applongpoll",
+                    uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/applongpoll",
                     headers: outgoingHeaders,
                     timeout: 63
                 ],
@@ -665,7 +686,7 @@ void cloudLongPollResult(resp, data)
         }
         else
         {
-            def retryDelayMilliseconds = 60000 - (now() - state.cloudPollTimestamp)
+            def retryDelayMilliseconds = 60000 - (now() - atomicState.cloudPollTimestamp)
 
             if (!isExpectedResponse)
             {
@@ -676,7 +697,8 @@ void cloudLongPollResult(resp, data)
                     delayString = " in $retryDelaySeconds seconds"
                 }
 
-                log.warn "Long Poll failed with status ${resp.getStatus()}.  Trying a regular poll$delayString."
+                def errorString = httpResponseToString(resp.getStatus())
+                log.warn "Long Poll failed with status '$errorString'.  Trying a regular poll$delayString."
             }
 
             if (retryDelayMilliseconds > 0)
@@ -696,13 +718,13 @@ void cloudLongPollMonitor()
     synchronized(this)
     {
         logVerbose "cloudLongPollMonitor checking..."
-        if (state.isUsingCloud && state.isLoggedIn)
+        if (atomicState.isUsingCloud && atomicState.isLoggedIn)
         {
             // If we haven't had a successfull long poll for a while,
             // do a full poll reset.
             def currentTime = now()
 
-            if (state.cloudPollTimestamp + 120000 < currentTime)
+            if (atomicState.cloudPollTimestamp + 120000 < currentTime)
             {
                 log.warn "Cloud long polling appears to have stalled. Restarting..."
                 cloudPollStart()
@@ -714,10 +736,10 @@ void cloudLongPollMonitor()
 // Generates a unique id to help enforce only one cloud poll loop is running.
 def updateCloudPollUniqueId()
 {
-    synchronized (state)
+    synchronized (atomicState)
     {
-        state.cloudPollUniqueId = (state.cloudPollUniqueId ?: 0) + 1
-        return state.cloudPollUniqueId
+        atomicState.cloudPollUniqueId = (atomicState.cloudPollUniqueId ?: 0) + 1
+        return atomicState.cloudPollUniqueId
     }
 }
 
@@ -729,7 +751,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
     def powerStatus = device.currentValue("power")
     def thermostatStatus = device.currentValue("thermostat")
 
-    log.debug "$pollDataMap"
+    logDebug "$pollDataMap"
     pollDataMap.each
     { param, value ->
         //logVerbose "Processing $param = $value"
@@ -761,7 +783,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 {
                     // Save off the currently set fan speed, but only if non-zero.
                     // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
-                    state.fanspeedLast = valueInt
+                    atomicState.fanspeedLast = valueInt
                 }
                 break
 
@@ -771,7 +793,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 {
                     // Only update these events if we have a valid setpoint.  The app turns off the thermostat by setting it to 0, but
                     // we'll try to restore the previous setpoint automatically.
-                    state.setpointLast = valueInt
+                    atomicState.setpointLast = valueInt
 
                     // ThermostatHeatingSetpoint
                     sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
@@ -795,7 +817,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 sendEvent(name: "errors", value: errorList)
                 
                 // Now output the error messages to the log.
-                errorList.each { errorCode -> log.error "${ERROR_MESSAGES[errorCode]}" }
+                errorList.each { errorCode -> log.error "Fireplace message: ${ERROR_MESSAGES[errorCode]}" }
                 break
 
             // Flame is on
@@ -817,7 +839,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 {
                     // Only save the light value if it's not off.  Used to restore the light when
                     // issued a simple "lightOn" request.
-                    state.lightLast = valueInt
+                    atomicState.lightLast = valueInt
                 }
 
                 // Notify any child devices implementing Light control
@@ -840,15 +862,15 @@ void consumePollData(pollDataMap, forceSchedule = false)
 
             // Device unique serial (used for identification)
             case "serial":
-                if ((state.serial ?: "") != value)
+                if ((atomicState.serial ?: "") != value)
                 {
-                    state.serial = value
+                    atomicState.serial = value
                 }
                 break
 
             // Does this fireplace have a light?
             case "feature_light":
-                state.hasLight = (valueInt != 0)
+                atomicState.hasLight = (valueInt != 0)
                 break
 
             case "pilot":
@@ -911,19 +933,19 @@ void consumePollData(pollDataMap, forceSchedule = false)
     // We've tied "heat" vs "off" to the switch value.
     sendEvent(name: "thermostatMode", value: (switchStatus == "on") ? "heat" : "off", descriptionText:"Hubitat Thermostat mode")
 
-    if (!state.isUsingCloud)
+    if (!atomicState.isUsingCloud)
     {
         if (switchStatus != previousSwitchStatus || forceSchedule)
         {
             if (switchStatus == "on")
             {
                 log.info "Increasing refresh frequency to every 5 minutes while fireplace is on."
-                runEvery5Minutes("refresh")
+                runEvery5Minutes("localPoll")
             }
             else
             {
                 log.info "Decreasing refresh frequency to every 15 minutes while fireplace is off."
-                runEvery15Minutes("refresh")
+                runEvery15Minutes("localPoll")
             }
         }
     }
@@ -934,7 +956,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
 //==============
 def sendCommand(command, value)
 {
-    if (state.isUsingCloud)
+    if (atomicState.isUsingCloud)
     {
         return sendCloudCommand(command, value)
     }
@@ -954,7 +976,7 @@ def sendLocalCommand(command, value)
         return
     }
 
-    log.info "Sending local command ${commandSpec.localCommand} = $value"
+    log.info "Sending local command '${commandSpec.localCommand} = $value'"
 
     def commandData = "command=${commandSpec.localCommand}&value=$value"
     def payload = "post:$commandData"
@@ -989,12 +1011,12 @@ def sendLocalCommand(command, value)
         }
     }
 
-    if (!state.isUsingCloud)
+    if (!atomicState.isUsingCloud)
     {
         // Force a refresh a few seconds after the command.
         // This needs to be short enough so Google can get a response before timing out,
         // but long enough to not soft-lock the fireplace.
-        runIn(3, "refresh", [overwrite: true, data: [forceSchedule: true]])
+        runIn(3, "localPoll", [overwrite: true, data: [forceSchedule: true]])
     }
 }
 
@@ -1012,7 +1034,7 @@ def getChallenge()
 
 def sendCloudCommand(command, value)
 {
-    if (!state.isLoggedIn)
+    if (!atomicState.isLoggedIn)
     {
         log.warn "Aborting cloud command $command since we aren't logged in."
         return false
@@ -1027,12 +1049,12 @@ def sendCloudCommand(command, value)
         return
     }
 
-    log.info "Sending cloud command ${commandSpec.cloudCommand} = $value"
+    log.info "Sending cloud command '${commandSpec.cloudCommand} = $value'"
 
     try
     {
         httpPost([
-                uri: "${parent.getRemoteServerRoot()}/${state.serial}/${settings.apiKey}/apppost",
+                uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/${settings.apiKey}/apppost",
                 headers: [ 'Cookie': parent.makeCookiesString() ],
                 body: "${commandSpec.cloudCommand}=$value",
                 timeout: 10
