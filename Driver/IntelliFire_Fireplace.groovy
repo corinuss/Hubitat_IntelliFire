@@ -25,6 +25,11 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    05/05/2024 v2.1.0   - Cloud Polling can now be set independently from Control.
+ *                          New 'timerExpires' attribute to know when the current timer expires.  (ISO 8601 format)
+ *                          Fan Control now supports "on" speed.  (Restores previous speed value.)
+ *                          Fixed errors from spamming logs on every status update.
+ *                          Event descriptions updated to describe what happened.  (Hubitat standard.)
  *    01/20/2024 v2.0.1   - Manual Refresh safely works for Cloud control.  Also cleaning up a few log messages.
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  */
@@ -32,6 +37,7 @@
 import groovy.transform.Field
 import hubitat.helper.HexUtils
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
 import org.apache.http.client.HttpResponseException
 
 metadata
@@ -76,6 +82,7 @@ metadata
         attribute "thermostat", "number"
         attribute "thermostatMode", "enum", ThermostatMode // supported modes
         attribute "timer", "number"
+        attribute "timerExpires", "string"
     }
     
     preferences
@@ -83,9 +90,10 @@ metadata
         input name: "ipAddress", type: "text", title: "Local IP Address", required: true
         input name: "apiKey", type: "text", title: "API Key", description: "Find this on IntelliFire's servers", required: true
         input name: "userId", type: "text", title: "User ID", description: "Find this on IntelliFire's servers", required: true
-        input name: "enableCloudControl", type: "bool", title: "Issue commands via online cloud API?", defaultValue: false
-        input name: "thermostatOnDefault", type: "bool", title: "When turning on the fireplace, should the thermostat be enabled by default?", defaultValue: false
-        input name: "shouldRestoreFanSpeed", type: "bool", title: "When turning on the fireplace, should we ensure the fan speed is restored to its last value?", defaultValue: false
+        input name: "enableCloudControl", type: "bool", title: "Issue commands using cloud?", defaultValue: false
+        input name: "enableCloudPolling", type: "bool", title: "Poll status updates using cloud? (Recommended)", defaultValue: false
+        input name: "thermostatOnDefault", type: "bool", title: "Enable the thermostat when turning on fireplace?", defaultValue: false
+        input name: "shouldRestoreFanSpeed", type: "bool", title: "Restore the fan speed when turning on fireplace?", defaultValue: false
         input name: "enableDebugLogging", type: "enum", title: "Debug Logging Level", options: LogDebugLevel.collect{k,v -> k}, defaultValue: "off"
     }
 }
@@ -100,7 +108,7 @@ void logDebug (msg)
 
 void logVerbose (msg)
 {
-    if (enableDebugLogging != null && LogDebugLevel[enableDebugLogging] >= LogDebugLevel["verbose"])
+    if (enableDebugLogging != null && LogDebugLevel[enableDebugLogging] >= LogDebugLevel["debugVerbose"])
     {
         log.debug msg
     }
@@ -115,11 +123,26 @@ void configure()
     updated()
 }
 
+// Cloud polling was added later.  If null, should copy from cloud control.
+void updateCloudPollingSettingIfNeeded()
+{
+    if (settings.enableCloudPolling == null)
+    {
+        log.info "Setting null enableCloudPolling setting to ${settings.enableCloudControl}.  (Copied from enableCloudControl.)"
+
+        // Fix setting for future calls.
+        device.updateSetting("enableCloudPolling", settings.enableCloudControl)
+
+        // Fix setting for the current stack.
+        settings.enableCloudPolling = settings.enableCloudControl
+    }
+}
+
 void updated()
 {
-    if (atomicState.isUsingCloud == null || atomicState.isUsingCloud != settings.enableCloudControl)
+    if (atomicState.isUsingCloud == null || atomicState.isUsingCloud != settings.enableCloudPolling)
     {
-        atomicState.isUsingCloud = settings.enableCloudControl
+        atomicState.isUsingCloud = settings.enableCloudPolling
 
         if (atomicState.isUsingCloud)
         {
@@ -187,6 +210,11 @@ int getSpeedFromString(String fanspeed)
 {
     int fanspeedInt = 0
 
+    if (fanspeed == "on")
+    {
+        return atomicState.fanspeedLast ?: INTELLIFIRE_COMMANDS["FAN_SPEED"].max
+    }
+    
     int fanspeedCount = FanControlSpeed.size()
     for (int i=0; i<fanspeedCount; i++)
     {
@@ -233,6 +261,13 @@ void cycleSpeed()
     
     int currentFanspeed = getSpeedFromString(device.currentValue("speed", true) ?: FanControlSpeed[0])
     int newFanspeed = currentFanspeed + 1
+    
+    if (FanControlSpeed[newFanspeed] == "on")
+    {
+        // Not a real speed, so skip it.
+        newFanspeed = newFanspeed + 1
+    }
+    
     if (newFanspeed >= FanControlSpeed.size())
     {
         newFanspeed = 0
@@ -473,11 +508,37 @@ def httpResponseToString(responseCode)
     return responseString
 }
 
+def stringToList(listString)
+{
+    def matcher = listString =~ /\[(.*)\]/
+
+    // Any result other than 1 is a malformed string.
+    if (matcher.size() != 1)
+    {
+        return null
+    }
+
+    def itemStrings = matcher[0][1]
+    def itemList = []
+    for (String itemString : itemStrings.split(','))
+    {
+        def trimmedItemString = itemString.trim()
+        if (trimmedItemString != "")
+        {
+            itemList << trimmedItemString
+        }
+    }
+
+    return itemList
+}
+
 //===================
 // REFRESH (POLLING)
 //===================
 void refresh(forceSchedule = false)
 {
+    updateCloudPollingSettingIfNeeded()
+
     if (atomicState.isUsingCloud)
     {
         cloudPollStart()
@@ -490,6 +551,8 @@ void refresh(forceSchedule = false)
 
 void localPoll(forceSchedule = false, forcePoll = false)
 {
+    updateCloudPollingSettingIfNeeded()
+
     if (!atomicState.isUsingCloud || forcePoll)
     {
         // Update current state from fireplace.
@@ -509,10 +572,12 @@ void cloudPollStart()
 {
     def success = true
 
+    updateCloudPollingSettingIfNeeded()
+
     if (atomicState.isLoggedIn == null)
     {
         log.error "Cloud control not initialized.  Open the Intellifire Manager App and confirm your credentials with the app once."
-        device.updateSetting("enableCloudControl", false)
+        device.updateSetting("enableCloudPolling", false)
         updated()
         return
     }
@@ -549,7 +614,7 @@ void cloudPollStart()
 void cloudPollResult(resp, data)
 {
     def statusCode = resp.getStatus()
-    logDebug "cloudPollResult(${data['cloudPollUniqueId']}) Status $statusCode"
+    logVerbose "cloudPollResult(${data['cloudPollUniqueId']}) Status $statusCode"
 
     if (statusCode >= 200 && statusCode < 300)
     {
@@ -582,6 +647,8 @@ void cloudPollResult(resp, data)
 
 void cloudLongPollStart(cookies, cloudPollUniqueId)
 {
+    updateCloudPollingSettingIfNeeded()
+
     if (atomicState.cloudPollUniqueId != cloudPollUniqueId)
     {
         logDebug "cloudLongPollStart: atomicState.cloudPollUniqueId(${atomicState.cloudPollUniqueId}) != cloudPollUniqueId($cloudPollUniqueId).  Aborting this long poll."
@@ -629,10 +696,11 @@ void cloudLongPollResult(resp, data)
     //      Reaction: Restart polling with a normal poll first.
 
     logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Status ${resp.getStatus()}"    
+    updateCloudPollingSettingIfNeeded()
 
     if (resp.getStatus() == 200)
     {
-        logDebug "Received fireplace state update from cloud."
+        logVerbose "Received fireplace state update from cloud."
         consumePollData(parseJson(resp.data))
     }
 
@@ -659,7 +727,7 @@ void cloudLongPollResult(resp, data)
                 {
                     // Need to send the Etag back to avoid getting the same data again.
                     data['Etag'] = incomingHeaders['Etag']
-                    logDebug "Etag = ${data['Etag']}"
+                    logVerbose "Etag = ${data['Etag']}"
                 }
             }
         }
@@ -768,16 +836,21 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 if (pollDataMap.get("feature_thermostat", 0).toInteger() != 0)
                 {
                     // TemperatureMeasurement
-                    sendEvent(name: "temperature", value: convertCelsiusToUserTemperature(valueInt), unit: "°${getTemperatureScale()}", descriptionText: "Room temperature")
+                    def temperatureValue = convertCelsiusToUserTemperature(valueInt)
+                    sendEvent(name: "temperature", value: temperatureValue, unit: "°${getTemperatureScale()}",
+                        descriptionText: "${device.getDisplayName()} room temperature is now $temperatureValue°${getTemperatureScale()}")
                 }
                 break
 
             case "fanspeed":
                 // FanControl
-                sendEvent(name: "speed", value: FanControlSpeed[valueInt], descriptionText: "Fan speed")
+                sendEvent(name: "speed", value: FanControlSpeed[valueInt],
+                    descriptionText: "${device.getDisplayName()} fan speed was set to '${FanControlSpeed[valueInt]}'")
 
                 // Google Fan Speed Percentages
-                sendEvent(name: "fanspeedPercent", value: valueInt*25, unit: "%", descriptionText: "Fan speed")
+                def fanspeedPercentage = valueInt*25
+                sendEvent(name: "fanspeedPercent", value: fanspeedPercentage, unit: "%",
+                    descriptionText: "${device.getDisplayName()} fan speed was set to $fanspeedPercentage%")
 
                 if (valueInt != 0)
                 {
@@ -795,45 +868,74 @@ void consumePollData(pollDataMap, forceSchedule = false)
                     // we'll try to restore the previous setpoint automatically.
                     atomicState.setpointLast = valueInt
 
+                    def setpoint = convertCelsiusToUserTemperature(valueInt/100)
+
                     // ThermostatHeatingSetpoint
-                    sendEvent(name: "heatingSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
+                    sendEvent(name: "heatingSetpoint", value:setpoint, unit: "°${getTemperatureScale()}",
+                        descriptionText: "${device.getDisplayName()} heating setpoint was set to $setpoint°${getTemperatureScale()}")
 
                     // ThermostatSetpoint
-                    sendEvent(name: "thermostatSetpoint", value: convertCelsiusToUserTemperature(valueInt/100), unit: "°${getTemperatureScale()}")
+                    sendEvent(name: "thermostatSetpoint", value: setpoint, unit: "°${getTemperatureScale()}",
+                        descriptionText: "${device.getDisplayName()} thermostat setpoint was set to $setpoint°${getTemperatureScale()}")
                 }
                 break
                 
             case "height":
-                sendEvent(name: param, value: valueInt, descriptionText: "Flame height")
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} flame height was set to $valueInt")
 
                 // SwitchLevel
-                sendEvent(name: "level", value: valueInt*25, unit: "%", descriptionText: "Flame height")
+                def heightPercentage = valueInt*25
+                sendEvent(name: "level", value: heightPercentage, unit: "%", descriptionText: "${device.getDisplayName()} flame height was set to $heightPercentage%")
                 break
 
             case "errors":
-                // First convert the error integers into short error code strings for our attributes.
                 def errorList = []
-                value.each { errorInt -> errorList << ERROR_MESSAGE_VALUE_MAP[errorInt] }
+                def previousErrors = stringToList(device.currentValue("errors"))
+
+                // First convert the error integers into short error code strings for our attributes.
+                value.each {
+                    errorInt ->
+                        def errorString = ERROR_MESSAGE_VALUE_MAP[errorInt]
+                        errorList << errorString
+
+                    // Now output the error messages to the log.
+                    if (previousErrors.contains(errorString))
+                    {
+                        // Error still active.  Ignore it and remove so we don't treat it as cleared below.
+                        previousErrors.remove(errorString)
+                    }
+                    else
+                    {
+                        // New error.  Report it.
+                        log.error "Fireplace error: [$errorString] ${ERROR_MESSAGES[errorString]}"
+                    }
+                }
+
+                // Report any remaining previous error messages as now cleared.
+                previousErrors.each {
+                    errorString ->
+                        logVerbose "Fireplace error $errorString cleared."
+                }
+
                 sendEvent(name: "errors", value: errorList)
-                
-                // Now output the error messages to the log.
-                errorList.each { errorCode -> log.error "Fireplace message: ${ERROR_MESSAGES[errorCode]}" }
                 break
 
             // Flame is on
             case "power":
                 powerStatus = valueInt
-                sendEvent(name: param, value: valueInt, descriptionText: "Flame is ignited")
+                def flameState = valueInt ? "ignited" : "extinguished"
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} flame was $flameState")
                 break;
 
             // Thermostat is controlling flame power
             case "thermostat":
                 thermostatStatus = valueInt
-                sendEvent(name: param, value: valueInt, descriptionText: "Thermostat is controlling the flame")
+                def thermostatState = valueInt ? "enabled" : "disabled"
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} thermostat control was $thermostatState")
                 break;
 
             case "light":
-                sendEvent(name: param, value: valueInt, descriptionText: "Light is on")
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} light level was set to $valueInt")
 
                 if (valueInt != 0)
                 {
@@ -874,20 +976,66 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 break
 
             case "pilot":
-                sendEvent(name: param, value: valueInt, descriptionText: "Cold Climate pilot light enabled")
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} cold climate pilot light was ${valueInt ? "enabled" : "disabled"}")
                 break
 
             case "prepurge":
-                sendEvent(name: param, value: valueInt, descriptionText: "2-minute pre-purge before flame ignites (Power Vent only)")
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} pre-purge ${valueInt ? "started" : "ended"}")
                 break
 
             case "hot":
-                sendEvent(name: param, value: valueInt, descriptionText: "Fireplace hot sensor")
+                def descriptionText = "${device.getDisplayName()} is still HOT"
+                if (valueInt == 0)
+                {
+                    // Hot sensor gets disabled for two very different reasons, so let the user know which happened.
+                    if (pollDataMap.get("power", 0).toInteger() != 0)
+                    {
+                        descriptionText = "${device.getDisplayName()} flame was reignited"
+                    }
+                    else
+                    {
+                        descriptionText = "${device.getDisplayName()} is no longer hot"
+                    }
+                }
+
+                sendEvent(name: param, value: valueInt, descriptionText: descriptionText)
                 break
 
             case "timer":
-                sendEvent(name: param, value: valueInt, descriptionText: "Timer is active")
+                sendEvent(name: param, value: valueInt, descriptionText: "${device.getDisplayName()} timer was ${valueInt ? "enabled" : "disabled"}")
                 break
+
+            case "timeremaining":
+                if (valueInt == 0)
+                {
+                    atomicState.remove("timerExpiration")
+                    sendEvent(name: "timerExpires", value: " ", descriptionText: "${device.getDisplayName()} timer expired")
+                }
+                else
+                {
+                    def currentTime = (long)(pollDataMap.get("timestamp", 0).toInteger())
+                    def currentExpiration = currentTime + valueInt
+
+                    // The expiration time fluctuates wildly (as much as 15 seconds), possibly due to "timestamp"
+                    // being a cloud value and "timeremaining" counting down on the fireplace itself.  But the timer
+                    // must be initialized in whole minutes, ignore any +/- 30 second fluctuations to avoid
+                    // generating unnecessary events.
+                    def expirationDelta = (atomicState.timerExpiration ?: 0) - currentExpiration
+                    if (expirationDelta > 30 || expirationDelta < -30)
+                    {
+                        atomicState.timerExpiration = currentExpiration
+                        def expirationDate = new Date(currentExpiration * 1000)
+
+                        def formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssX")
+                        def expirationString = formatter.format(expirationDate)
+
+                        formatter.applyPattern("hh:mm a")
+                        def expirationTimeString = formatter.format(expirationDate)
+
+                        sendEvent(name: "timerExpires", value: expirationString, descriptionText: "${device.getDisplayName()} timer is set to expire at $expirationTimeString")
+                    }
+                }
+                break            
 
             // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
             //case "timeremaining":             // Seconds until timer turns off fireplace (doesn't get updated frequently enough)
@@ -916,7 +1064,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
             //case "uptime":                    // Time fireplace has been on internet
             //case "connection_quality":        // Connection quality of thermostat remote
             //case "ecm_latency":               // Unknown
-                // sendEvent(name: param, value: value, descriptionText: "Raw fireplace poll data")
+                // sendEvent(name: param, value: value, descriptionText: "${device.getDisplayName()} $param was set to '$value'")
                 // break
         }
     }
@@ -927,11 +1075,12 @@ void consumePollData(pollDataMap, forceSchedule = false)
     // in control, regardless of actual flame state.
     def previousSwitchStatus = device.currentValue("switch")
     def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
-    sendEvent(name: "switch", value: switchStatus, descriptionText:"power or thermostat is on")
+    sendEvent(name: "switch", value: switchStatus, descriptionText:"${device.getDisplayName()} was switched $switchStatus")
 
     // ThermostatMode
     // We've tied "heat" vs "off" to the switch value.
-    sendEvent(name: "thermostatMode", value: (switchStatus == "on") ? "heat" : "off", descriptionText:"Hubitat Thermostat mode")
+    def thermostatMode = (switchStatus == "on") ? "heat" : "off"
+    sendEvent(name: "thermostatMode", value: thermostatMode, descriptionText:"${device.getDisplayName()} thermostat mode was set to '$thermostatMode'")
 
     if (!atomicState.isUsingCloud)
     {
@@ -956,7 +1105,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
 //==============
 def sendCommand(command, value)
 {
-    if (atomicState.isUsingCloud)
+    if (settings.enableCloudControl)
     {
         return sendCloudCommand(command, value)
     }
@@ -1013,7 +1162,7 @@ def sendLocalCommand(command, value)
 
     if (!atomicState.isUsingCloud)
     {
-        // Force a refresh a few seconds after the command.
+        // Force a refresh a few seconds after the command if using local polling.
         // This needs to be short enough so Google can get a response before timing out,
         // but long enough to not soft-lock the fireplace.
         runIn(3, "localPoll", [overwrite: true, data: [forceSchedule: true]])
@@ -1098,7 +1247,7 @@ def sendCloudCommand(command, value)
 [
     "off": 0,
     "debug": 1,
-    "verbose": 2
+    "debugVerbose": 2
 ]
 
 // Subset of officially supported FanControl speed names.
@@ -1108,7 +1257,8 @@ def sendCloudCommand(command, value)
     "low",
     "medium",
     "medium-high",
-    "high"
+    "high",
+    "on"
 ]
 
 @Field Map OnOffValue =

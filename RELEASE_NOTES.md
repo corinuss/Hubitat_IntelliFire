@@ -1,6 +1,13 @@
 # Hubitat Intellifire Release Notes
 This doc will contain a record of significant changes to this package.  Minor version updates might not be reported here.  Refer to the changelog at the top of the individual groovy files for those changes.
 
+## 2.1.0
+* Cloud Polling can now be set independently from Control.
+* New 'timerExpires' attribute to know when the current timer expires.  (ISO 8601 format)
+* Fan Control now supports "on" speed.  (Restores previous speed value.)
+* Fixed errors from spamming logs on every status update.
+* Event descriptions updated to describe what happened.  (Hubitat standard.)
+
 ## 2.0.0
 
 ### If upgrading from 1.x...

@@ -27,6 +27,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    05/05/2024 v2.1.0   - Event descriptions updated to describe what happened.  (Hubitat standard.)
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  */
 
@@ -96,7 +97,9 @@ void setLightLevelFromParent(level)
 {
     levelPercentage = (int)(level * 33.34)
 
-    sendEvent(name: "light", value: level, descriptionText: "Light level")
-    sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "Light level")
-    sendEvent(name: "switch", value: (level != 0) ? "on" : "off", descriptionText: "Light is on")
+    sendEvent(name: "light", value: level, descriptionText: "${device.getDisplayName()} level was set to $level")
+    sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "${device.getDisplayName()} level was set to $levelPercentage%")
+
+    def switchStatus = (level != 0) ? "on" : "off"
+    sendEvent(name: "switch", value: switchStatus, descriptionText: "${device.getDisplayName()} was switched $switchStatus")
 }

@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    05/05/2024 v2.1.0   - Cloud Polling can now be set independently from Control.
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  */
 
@@ -231,16 +232,18 @@ def fireplacesPage(params)
 
         section("Local or Cloud Control?")
         {
-            paragraph "Local control does not require an internet connection once the fireplace is configured, but can sometimes lock up the wifi module, requiring a power cycle.  Cloud control also reacts to status updates immediately, allowing the Hubitat device to stay more in sync with the mobile app and physical remote."
-            paragraph "Cloud control is recommended.  You can change this later on device settings."
+            paragraph "Local control and polling do not require an internet connection once the fireplace is configured, but can sometimes lock up the wifi module, requiring a power cycle.  Cloud polling also reacts to status updates immediately, allowing the Hubitat device to stay more in sync with the mobile app and physical remote."
+            paragraph "Cloud control and polling are recommended.  You can change this later on device settings."
             if (settings.saveCredentials)
             {
                 input(name: "enableCloudControl", title: "Enable Cloud Control?", type: "bool", defaultValue: true)
+                input(name: "enableCloudPolling", title: "Enable Cloud Polling?", type: "bool", defaultValue: true)
             }
             else
             {
                 paragraph "Cloud control is disabled since credentials weren't saved."
                 app.updateSetting("enableCloudControl", [type:"bool", value: false])
+                app.updateSetting("enableCloudPolling", [type:"bool", value: false])
             }
         }
     }
@@ -491,6 +494,7 @@ def createFireplace(fireplace)
         device.updateSetting("userId", userId)
         device.updateSetting("thermostatOnDefault", hasThermostat)
         device.updateSetting("enableCloudControl", settings.enableCloudControl)
+        device.updateSetting("enableCloudPolling", settings.enableCloudPolling)
         device.consumePollData(fireplace.data)
         device.notifyLoginChange(settings.saveCredentials, getCurrentLoginId(), true)
         device.configure()

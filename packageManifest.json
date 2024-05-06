@@ -1,12 +1,12 @@
 {
   "packageName": "Hubitat IntelliFire",
   "author": "corinuss",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "minimumHEVersion": "0.0",
   "licenseFile": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/LICENSE",
   "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-intellifire-driver/125053",
-  "dateReleased": "2024-01-20",
+  "dateReleased": "2024-05-05",
   "drivers": [
     {
       "id": "e4f1934b-7beb-4baf-a032-13dc0c7779f6",

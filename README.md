@@ -25,13 +25,13 @@ If updating from 1.x and are a power user, see the [Release Notes](https://githu
 Cloud is (unusually) more responsive and more stable than Local.  But here's a detailed breakdown on why to choose each one.
 
 Cloud
-* \+ Status updates are reported immediately (usually within 1 second) via long polling.  The status you see on Hubitat will always be up to date, regardless of what caused the change.
+* \+ (Polling) Status updates are reported immediately (usually within 1 second) via long polling.  The status you see on Hubitat will always be up to date, regardless of what caused the change.
 * \- All traffic must go through Intellifire's servers.  Credentials must be saved on the hub (though will only be used if the login session expires).
 
 Local
 * \+ No automation traffic leaves your local network (except for initially creating the fireplace device).  Will function even if the Intellifire servers are not available.
 * \- Fireplace needs a static IP on your local network, since IP address is used to find the fireplace.
-* \- Polling can be delayed due to explicit refreshing.  The driver tries to update immediately after it does something that might change the status, but changes from other sources (mobile app or remote) may not be updated immediately.
+* \- (Polling) Polling can be delayed due to explicit refreshing.  The driver tries to update immediately after it does something that might change the status, but changes from other sources (mobile app or remote) may not be updated immediately.
 * \- Unstable.  Often goes offline every few weeks in the winter and requires a physical reset (toggle the switch or power cycle the fireplace).  It's not yet known for certain by the home automation community what causes the local instability.
 
 ## Limitations
@@ -44,13 +44,13 @@ Cloud commands do not seem to cause this stability issue.  In addition, due to t
 ### Thermostat Set Point not saved on fireplace
 When thermostat controls are turned off, the thermostat set point is lost.  This means that your physical remote, the IntelliFire mobile app, and the Hubitat device driver have no way of sharing this value.
 
-To work around this limitation, this device driver will attempt to cache the current set point whenever it is non-zero and will restore it when the thermostat is enabled, but it might not catch every change by the mobile app or physical remote due to polling intervals.  It is highly recommended that you control the fireplace with only one of these systems, or expect to reset the thermostat each time.
+To work around this limitation, this device driver will attempt to cache the current set point whenever it is non-zero and will restore it when the thermostat is enabled.  But when using local polling, it might not catch every change by the mobile app or physical remote due to polling intervals.  It is highly recommended that you control the fireplace with only one of these systems, or use cloud polling to minimize the chance of changes being missed.
 
 ### All temperatures are based in Celsius
 The IntelliFire module only understands whole Celsius temperatures.  If your Hubitat is set to Fahrenheit, they will be converted to and from Celsius.  This means your granularity is about 2°F.  Attempting to set a temperature in the middle of this range will automatically round down a degree in the setting.  For your best experience, adjust the temperature by at least 2°F each time.
 
-### Light limitation
-It is impossible to have both Light and Switch capabilities on a device which control different features of the device, due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, a virtual light child device will be created to control the Light like any other light.  This will be created in the IntelliFire Fireplace Manager app during setup, or if deleted can be recreated later by pressing the **Create Virtual Light Device** button on the Fireplace.
+### Hubitat Light limitation
+It is impossible to have both Light and Switch capabilities on a device which control different features of the device due to Hubitat using the same interface for both capabilities.  If your fireplace has a light, a virtual light child device will be created to control the Light like any other light.  This will be created in the IntelliFire Fireplace Manager app during setup, or if deleted can be recreated later by pressing the **Create Virtual Light Device** button on the Fireplace.
 
 ## Capabilities list
 The following Hubitat capabilities are supported and map to these Fireplace features.
