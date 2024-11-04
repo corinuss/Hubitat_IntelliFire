@@ -25,6 +25,10 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/03/2024 v2.2.0   - Adding brand, serial, and features to Device Details.  (Some static states moved here.)
+ *                          Device name is now updated if received.  (User can still override by setting a Label.)
+ *                          New option to resend a cloud command locally if a cloud command fails for a network-related reason.
+ *                          Failed 'Off' commands now retry for up to 15 minutes to ensure the fireplace turns off.
  *    05/05/2024 v2.1.0   - Cloud Polling can now be set independently from Control.
  *                          New 'timerExpires' attribute to know when the current timer expires.  (ISO 8601 format)
  *                          Fan Control now supports "on" speed.  (Restores previous speed value.)
@@ -39,6 +43,7 @@ import hubitat.helper.HexUtils
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import org.apache.http.client.HttpResponseException
+import org.apache.http.conn.ConnectTimeoutException
 
 metadata
 {
@@ -92,6 +97,7 @@ metadata
         input name: "userId", type: "text", title: "User ID", description: "Find this on IntelliFire's servers", required: true
         input name: "enableCloudControl", type: "bool", title: "Issue commands using cloud?", defaultValue: false
         input name: "enableCloudPolling", type: "bool", title: "Poll status updates using cloud? (Recommended)", defaultValue: false
+        input name: "enableCloudControlLocalFallback", type: "bool", title: "Issue commands locally on cloud failure?", defaultValue: true
         input name: "thermostatOnDefault", type: "bool", title: "Enable the thermostat when turning on fireplace?", defaultValue: false
         input name: "shouldRestoreFanSpeed", type: "bool", title: "Restore the fan speed when turning on fireplace?", defaultValue: false
         input name: "enableDebugLogging", type: "enum", title: "Debug Logging Level", options: LogDebugLevel.collect{k,v -> k}, defaultValue: "off"
@@ -138,8 +144,21 @@ void updateCloudPollingSettingIfNeeded()
     }
 }
 
+void moveSerialIfNeeded()
+{
+    if (atomicState.serial != null)
+    {
+        device.updateDataValue("serial", atomicState.serial)
+        atomicState.remove("serial")
+    }
+}
+
 void updated()
 {
+    // Backwards compat cleanup
+    moveSerialIfNeeded()            // 2.2.0
+    atomicState.remove("hasLight")  // 2.2.0
+
     if (atomicState.isUsingCloud == null || atomicState.isUsingCloud != settings.enableCloudPolling)
     {
         atomicState.isUsingCloud = settings.enableCloudPolling
@@ -156,7 +175,7 @@ void updated()
         {
             log.info "Switching to LOCAL control."
             unschedule("cloudLongPollMonitor")
-            localPoll(forceSchedule: true)
+            localPoll([forceSchedule: true])
         }
 
         // Compatibility for transitioning periodic refresh calls to localPoll calls.
@@ -283,6 +302,8 @@ void cycleSpeed()
 // Switch
 void on()
 {
+    unschedule("verifyOff")
+    
     if (shouldRestoreFanSpeed)
     {
         logDebug "Will check fan speed in 5 minutes."
@@ -301,12 +322,41 @@ void on()
 }
 
 // Switch (and ThermostateMode)
-void off()
+void off(retries = 0)
 {
     unschedule("restoreFanSpeed")
 
     // Turn off all modes.
     sendCommand("POWER", 0)
+
+    if (atomicState.isUsingCloud)
+    {
+        runIn(60, "verifyOff", [overwrite: true, data: [retries: retries+1]])
+    }
+}
+
+// There's been a few times where my automated "off" command has been ignored by the cloud,
+// where no error is returned, yet the fireplace does not receive the command.
+// Since automations are often used to ensure the fireplace is turned off when a user leaves
+// the house or goes to bed, it's very important that this command goes through, so make a
+// few more attempts.
+// Usually the off command arrives on the next retry.
+void verifyOff(data)
+{
+    def switchStatus = device.currentValue("switch")
+    if (switchStatus == "on")
+    {
+        int maxRetries = 15
+        if (retries < maxRetries)
+        {
+            log.warn "Fireplace has not turned off as requested.  Trying again.  (Retry ${data.retries}/$maxRetries)"
+            off(data.retries)
+        }
+        else
+        {
+            log.error "Failed to turn off fireplace after $maxRetries retries.  Aborting attempt."
+        }
+    }
 }
 
 //====================
@@ -357,13 +407,13 @@ void setThermostatControl(enabled)
 //=======
 void createVirtualLightDevice(overrideHasLight = false)
 {
-    if (!overrideHasLight && !atomicState.hasLight)
+    if (!overrideHasLight && (device.getDataValue("featureLight") != "true"))
     {
         log.warn "Fireplace reports Light feature not available.  Aborting child Light creation."
         return
     }
 
-    def serial = atomicState.serial
+    def serial = device.getDataValue("serial")
     if (serial == null)
     {
         log.error "No serial available.  Cannot create child Light device."
@@ -549,7 +599,12 @@ void refresh(forceSchedule = false)
     }
 }
 
-void localPoll(forceSchedule = false, forcePoll = false)
+void localPoll(Map data)
+{
+    localPoll(data.get("forceSchedule", false), data.get("forcePoll", false))
+}
+
+void localPoll(Boolean forceSchedule = false, Boolean forcePoll = false)
 {
     updateCloudPollingSettingIfNeeded()
 
@@ -573,6 +628,7 @@ void cloudPollStart()
     def success = true
 
     updateCloudPollingSettingIfNeeded()
+    moveSerialIfNeeded()
 
     if (atomicState.isLoggedIn == null)
     {
@@ -605,7 +661,7 @@ void cloudPollStart()
     asynchttpGet(
         cloudPollResult,
         [
-            uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/apppoll",
+            uri: "${parent.getRemoteServerRoot()}/${device.getDataValue("serial")}/apppoll",
             headers: cookies,
         ],
         [ 'cookies': cookies, 'cloudPollUniqueId': cloudPollUniqueId ])
@@ -618,6 +674,8 @@ void cloudPollResult(resp, data)
 
     if (statusCode >= 200 && statusCode < 300)
     {
+        atomicState.cloudConnected = true
+
         consumePollData(parseJson(resp.data))
 
         log.info "Starting long polling for notifications of future status updates."
@@ -625,6 +683,8 @@ void cloudPollResult(resp, data)
     }
     else
     {
+        atomicState.cloudConnected = false
+
         if (statusCode == 403)
         {
             log.error "Failed while issuing cloud poll command due to invalid credentials."
@@ -648,6 +708,7 @@ void cloudPollResult(resp, data)
 void cloudLongPollStart(cookies, cloudPollUniqueId)
 {
     updateCloudPollingSettingIfNeeded()
+    moveSerialIfNeeded()
 
     if (atomicState.cloudPollUniqueId != cloudPollUniqueId)
     {
@@ -672,7 +733,7 @@ void cloudLongPollStart(cookies, cloudPollUniqueId)
     asynchttpGet(
         cloudLongPollResult,
         [
-            uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/applongpoll",
+            uri: "${parent.getRemoteServerRoot()}/${device.getDataValue("serial")}/applongpoll",
             headers: [ 'Cookie': cookies ],
             timeout: 63
         ],
@@ -734,6 +795,8 @@ void cloudLongPollResult(resp, data)
 
         if (isExpectedResponse && !atomicState.loginChanged)
         {
+            atomicState.cloudConnected = true
+
             logVerbose "cloudLongPollResult(${data['cloudPollUniqueId']}) Continue"
             atomicState.cloudPollTimestamp = now()
 
@@ -746,7 +809,7 @@ void cloudLongPollResult(resp, data)
             asynchttpGet(
                 cloudLongPollResult,
                 [
-                    uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/applongpoll",
+                    uri: "${parent.getRemoteServerRoot()}/${device.getDataValue("serial")}/applongpoll",
                     headers: outgoingHeaders,
                     timeout: 63
                 ],
@@ -758,6 +821,8 @@ void cloudLongPollResult(resp, data)
 
             if (!isExpectedResponse)
             {
+                atomicState.cloudConnected = false
+
                 def delayString = ""
                 def retryDelaySeconds = (int)(retryDelayMilliseconds / 1000)
                 if (retryDelaySeconds > 0)
@@ -890,7 +955,9 @@ void consumePollData(pollDataMap, forceSchedule = false)
 
             case "errors":
                 def errorList = []
-                def previousErrors = stringToList(device.currentValue("errors"))
+
+                // Going through the cache seems to always return old or invalid data on this string, so don't trust it.
+                def previousErrors = stringToList(device.currentValue("errors", true))
 
                 // First convert the error integers into short error code strings for our attributes.
                 value.each {
@@ -914,7 +981,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 // Report any remaining previous error messages as now cleared.
                 previousErrors.each {
                     errorString ->
-                        logVerbose "Fireplace error $errorString cleared."
+                        log.info "Fireplace error $errorString cleared."
                 }
 
                 sendEvent(name: "errors", value: errorList)
@@ -964,15 +1031,24 @@ void consumePollData(pollDataMap, forceSchedule = false)
 
             // Device unique serial (used for identification)
             case "serial":
-                if ((atomicState.serial ?: "") != value)
-                {
-                    atomicState.serial = value
-                }
+                updateDeviceData("serial", value)
                 break
 
             // Does this fireplace have a light?
             case "feature_light":
-                atomicState.hasLight = (valueInt != 0)
+                updateDeviceData("featureLight", (valueInt != 0).toString())
+                break
+
+            case "feature_thermostat":
+                updateDeviceData("featureThermostat", (valueInt != 0).toString())
+                break
+
+            case "feature_fan":
+                updateDeviceData("featureFan", (valueInt != 0).toString())
+                break
+
+            case "power_vent":
+                updateDeviceData("featurePowerVent", (valueInt != 0).toString())
                 break
 
             case "pilot":
@@ -1037,32 +1113,30 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 }
                 break            
 
+            case "fw_ver_str":
+                if (updateDeviceData("firmware", value))
+                {
+                    log.info "Firmware updated to '$value'."
+                }
+                break
+
+            case "brand":
+                updateDeviceData("brand", BRAND_MAP[value])
+                break
+
+            case "name":
+                if (value != "" && value != device.getName())
+                {
+                    device.setName(value)
+                }
+                break
+
             // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
-            //case "timeremaining":             // Seconds until timer turns off fireplace (doesn't get updated frequently enough)
-            //case "name":                      // Blank on my fireplace
             //case "battery":                   // Emergency battery level (USB-C connection)
-            //case "secondary_burner":          // Secondary burner active (?)
-            //case "ember_lights":              // Ember lights active (?)
-            //case "colored_lights":            // Colored lights active (?)
-            //case "hm_1":                      // Unknown
-            //case "hm_2":                      // Unknown
-            //case "hm_3":                      // Unknown
-            //case "hm_4":                      // Unknown
-            //case "feature_thermostat":        // Does this fireplace have a thermostat and temperature data?
-            //case "power_vent":                // Does this fireplace have a power vent?
-            //case "feature_fan":               // Does this fireplace have a fan?
-            //case "feature_secondary_burner":  // Does this fireplace have a secondary burner?
-            //case "feature_ember_lights":      // Does this fireplace have ember lights?
-            //case "feature_colored_lights":    // Does this fireplace have colored lights?
-            //case "feature_hm_1":              // Does this fireplace have hm_1?
-            //case "feature_hm_2":              // Does this fireplace have hm_2?
-            //case "feature_hm_3":              // Does this fireplace have hm_3?
-            //case "feature_hm_4":              // Does this fireplace have hm_4?
             //case "fw_version":                // Numeric firmware version (not useful)
-            //case "fw_ver_string":             // String firmware version
-            //case "downtime":                  // Unknown
-            //case "uptime":                    // Time fireplace has been on internet
-            //case "connection_quality":        // Connection quality of thermostat remote
+            //case "remote_downtime":           // How long has the remote been disconnected?
+            //case "remote_uptime":             // How long has the remote been connected?
+            //case "remote_connection_quality": // Connection quality of thermostat remote
             //case "ecm_latency":               // Unknown
                 // sendEvent(name: param, value: value, descriptionText: "${device.getDisplayName()} $param was set to '$value'")
                 // break
@@ -1098,6 +1172,18 @@ void consumePollData(pollDataMap, forceSchedule = false)
             }
         }
     }
+}
+
+def updateDeviceData(dataName, value)
+{
+    def currentState = device.getDataValue(dataName)
+    if (currentState == null || currentState != value)
+    {
+        device.updateDataValue(dataName, value)
+        return (currentState != null)
+    }
+
+    return false
 }
 
 //==============
@@ -1160,12 +1246,10 @@ def sendLocalCommand(command, value)
         }
     }
 
-    if (!atomicState.isUsingCloud)
+    if (!atomicState.isUsingCloud || !atomicState.cloudConnected)
     {
         // Force a refresh a few seconds after the command if using local polling.
-        // This needs to be short enough so Google can get a response before timing out,
-        // but long enough to not soft-lock the fireplace.
-        runIn(3, "localPoll", [overwrite: true, data: [forceSchedule: true]])
+        runIn(5, "localPoll", [overwrite: true, data: [forceSchedule: true, forcePoll: true]])
     }
 }
 
@@ -1199,11 +1283,12 @@ def sendCloudCommand(command, value)
     }
 
     log.info "Sending cloud command '${commandSpec.cloudCommand} = $value'"
+    moveSerialIfNeeded()
 
     try
     {
         httpPost([
-                uri: "${parent.getRemoteServerRoot()}/${atomicState.serial}/${settings.apiKey}/apppost",
+                uri: "${parent.getRemoteServerRoot()}/${device.getDataValue("serial")}/${settings.apiKey}/apppost",
                 headers: [ 'Cookie': parent.makeCookiesString() ],
                 body: "${commandSpec.cloudCommand}=$value",
                 timeout: 10
@@ -1213,6 +1298,24 @@ def sendCloudCommand(command, value)
             //logVerbose "Status $responseStatus"
             //logVerbose "Data: ${resp.data}"
             success = true
+        }
+    }
+    catch (ConnectTimeoutException e)
+    {
+        log.error "Connect timeout while issuing command '${commandSpec.cloudCommand}'"
+
+        if (settings.enableCloudControlLocalFallback)
+        {
+            success = sendLocalCommand(command, value)
+        }
+    }
+    catch (SocketTimeoutException e)
+    {
+        log.error "Socket timeout while issuing command '${commandSpec.cloudCommand}'"
+
+        if (settings.enableCloudControlLocalFallback)
+        {
+            success = sendLocalCommand(command, value)
         }
     }
     catch (HttpResponseException e)
@@ -1231,6 +1334,11 @@ def sendCloudCommand(command, value)
         else
         {
             log.error "Failed while issuing command '${commandSpec.cloudCommand}': Response $statusCode"
+
+            if (settings.enableCloudControlLocalFallback)
+            {
+                success = sendLocalCommand(command, value)
+            }
         }
 
         success = false
@@ -1340,6 +1448,20 @@ private static final INTELLIFIRE_COMMANDS =
         max: 1
     ]
 ]
+
+@Field
+private static final BRAND_MAP =
+[
+    "H&G":  "Heat & Glo",
+    "HTL":  "Heatilator",
+    "MAJ":  "Majestic",
+    "QUAD": "Quadra-Fire",
+    "VC":   "Vermont Castings",
+    "MON":  "Monessen",
+    "HAR":  "Harman",
+    "STEL": "Stellar",
+    "SLE":  "Simplifire"
+].withDefault { otherBrand -> "$otherBrand" }
 
 @Field
 private static final ERROR_MESSAGE_VALUE_MAP =

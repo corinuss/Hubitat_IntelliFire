@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/03/2024 v2.2.0   - Fireplace name is now assigned to device name rather than label (to allow user override).
  *    05/05/2024 v2.1.0   - Cloud Polling can now be set independently from Control.
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
  */
@@ -482,7 +483,7 @@ def createFireplace(fireplace)
         if (device == null)
         {
             isCreatingFireplace = true
-            device = addChildDevice("IntelliFire", "IntelliFire Fireplace", fireplaceDni, [label: fireplace.name])
+            device = addChildDevice("IntelliFire", "IntelliFire Fireplace", fireplaceDni, [name: fireplace.name])
         }
 
         // Apply settings to device

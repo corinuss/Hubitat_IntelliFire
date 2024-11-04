@@ -1,6 +1,21 @@
 # Hubitat Intellifire Release Notes
 This doc will contain a record of significant changes to this package.  Minor version updates might not be reported here.  Refer to the changelog at the top of the individual groovy files for those changes.
 
+## 2.2.0
+### Device Name is now set from Intellifire data
+Previously, when setting up your fireplace the first time, the fireplace name was assigned to the Device Label while the Device Name was left to the default value ("Intellifire Fireplace").  With this update, the fireplace name is now assigned to the Device Name, and that Device Name will be updated if you change the fireplace name in Intellifire software.  The Device Label will not be touched.
+
+If updating from a previous revision, clear out the Device Label to sync your device name to Intellifire's name.  Going forward, you can use the Device Label to override the fireplace name in Hubitat.
+
+### New Preference: Local retries while in Cloud mode
+When Cloud mode is enabled, commands that fail due to network issues can now be automatically retried via a local command.
+
+Note: Status updates will still only arrive over the cloud, so if you are unable to communicate with Intellifire's servers, the Hubitat will not get status updates after the command.  But at least you'll still have direct control of your fireplace in this situation.  Local polling is not attempted to minimize the risk of destabilizing the module.
+
+### Other updates
+* Various hardware details added and moved to the Device Details section of the driver since they rarely change.
+* Failed 'Off' commands are retried every minute for up to 15 minutes.  This is being added as a safety feature if the command fails for any reason (such as network instability).  Turning the fireplace back on via Hubitat will cancel these retries.
+
 ## 2.1.0
 * Cloud Polling can now be set independently from Control.
 * New 'timerExpires' attribute to know when the current timer expires.  (ISO 8601 format)

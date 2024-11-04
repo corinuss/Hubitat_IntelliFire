@@ -41,6 +41,8 @@ The IntelliFire modules are notorious for being a bit unstable, where after some
 
 Cloud commands do not seem to cause this stability issue.  In addition, due to the way the polling works, status updates are much more immediate when Cloud control is used.  For this reason, Cloud control is strongly recommended.
 
+**Update (Fall 2024)** - A Hearth & Home (Intellifire) dev reached out to me to let me know they have identified the issue causing the local instability and are working on a fix.  I do not have an ETA on the fix, but it will probably be deployed during a future firmware update cycle.  I will update when I know more and am able to.
+
 ### Thermostat Set Point not saved on fireplace
 When thermostat controls are turned off, the thermostat set point is lost.  This means that your physical remote, the IntelliFire mobile app, and the Hubitat device driver have no way of sharing this value.
 
