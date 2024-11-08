@@ -1,6 +1,9 @@
 # Hubitat Intellifire Release Notes
 This doc will contain a record of significant changes to this package.  Minor version updates might not be reported here.  Refer to the changelog at the top of the individual groovy files for those changes.
 
+## 2.2.1
+Supporting new firmware string variable name, which changed in firmware 3.12.0 (or 3.11.0).
+
 ## 2.2.0
 ### Device Name is now set from Intellifire data
 Previously, when setting up your fireplace the first time, the fireplace name was assigned to the Device Label while the Device Name was left to the default value ("Intellifire Fireplace").  With this update, the fireplace name is now assigned to the Device Name, and that Device Name will be updated if you change the fireplace name in Intellifire software.  The Device Label will not be touched.
