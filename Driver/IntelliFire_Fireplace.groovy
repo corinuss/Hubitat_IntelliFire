@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/08/2024 v2.2.1   - Supporting new firmware string variable name, which changed in firmware 3.12.0 (or 3.11.0).
  *    11/03/2024 v2.2.0   - Adding brand, serial, and features to Device Details.  (Some static states moved here.)
  *                          Device name is now updated if received.  (User can still override by setting a Label.)
  *                          New option to resend a cloud command locally if a cloud command fails for a network-related reason.
@@ -1113,7 +1114,8 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 }
                 break            
 
-            case "fw_ver_str":
+            case "fw_ver_str":  // Old name before firmware 3.12.0
+            case "firmware_version_string":
                 if (updateDeviceData("firmware", value))
                 {
                     log.info "Firmware updated to '$value'."
@@ -1133,7 +1135,7 @@ void consumePollData(pollDataMap, forceSchedule = false)
 
             // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
             //case "battery":                   // Emergency battery level (USB-C connection)
-            //case "fw_version":                // Numeric firmware version (not useful)
+            //case "firmware_version":          // Numeric firmware version (not useful)  (Named "fw_version" in older firmware before 3.12.0)
             //case "remote_downtime":           // How long has the remote been disconnected?
             //case "remote_uptime":             // How long has the remote been connected?
             //case "remote_connection_quality": // Connection quality of thermostat remote
