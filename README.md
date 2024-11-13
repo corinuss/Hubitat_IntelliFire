@@ -13,7 +13,7 @@ During initialization via the Intellifire Manager App, an apiKey unique to the f
 * If using local control, Fireplace should have a static IP address.  (Use your router's DHCP setting to reserve an IP to the fireplace.)
 
 ## Installation
-*(Coming soon)* Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.
+Using [Hubitat Package Manager](https://github.com/HubitatCommunity/hubitatpackagemanager) allows you to more easily install the driver and app, and will ensure that you are notified of updates when available.
 
 If you don't want to use Hubitat Package Manager, you can also just manually copy the Driver and App code into your hub.
 
@@ -72,6 +72,12 @@ The following Hubitat capabilities are supported and map to these Fireplace feat
 **Refresh** - Forces an immediate refresh of light state.
 **Switch** - Turns the light on/off. (Identical to Light)
 **SwitchLevel** - Controls the light level (dimmer)
+
+### IntelliFire Fireplace Virtual Fan
+**FanControl** - Controls the fan.
+**Refresh** - Forces an immediate refresh of fan state.
+**Switch** - Turns the fan on/off. (Restores the fan to the previous setting when turning on.)
+**SwitchLevel** - Allows the fan level to be set as a percentage.
 
 ## Troubleshooting
 The IntelliFire modules are notorious for being a bit unstable.  They should be fine in most normal use cases, but overuse (hammering the fireplace with commands) or underuse (summer) can cause them to misbehave.  Here's some suggestions on how to fix it when it misbehaves.

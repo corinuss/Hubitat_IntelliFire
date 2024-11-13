@@ -1,12 +1,12 @@
 /**
- *  IntelliFire Fireplace Virtual Light
+ *  IntelliFire Fireplace Virtual Fan
  *
  *  Hubitat version created by Eric Will (corinuss)
  *
- *  This is a virtual device intended to extend the main Fireplace device to fully
- *  support the Light capability.  Switch and Light capabilities cannot currently
- *  co-exist on Hubitat to have different functionalities on the same device due
- *  to an overlapping interface.
+ *  This is an OPTIONAL virtual child device to help better interface with other
+ *  Hubitat apps (such as those that expect to control the Fan with Level).
+ *  Full Fan control can also be accomplished with the main Fireplace without this
+ *  device.
  *
  *  MIT License
  *  Copyright (c) 2024 Eric Will
@@ -27,23 +27,23 @@
  *  SOFTWARE.
  *
  *  Change Log:
- *    11/12/2024 v2.3.0   - Update device name from parent.  (Missed in 2.2.0.)
- *    05/05/2024 v2.1.0   - Event descriptions updated to describe what happened.  (Hubitat standard.)
- *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
+ *    11/12/2024 v2.3.0   - Created Fan virtual device.
  */
+
+import groovy.transform.Field
 
 metadata
 {
-    definition (name: "IntelliFire Fireplace Virtual Light", namespace: "IntelliFire", author: "corinuss")
+    definition (name: "IntelliFire Fireplace Virtual Fan", namespace: "IntelliFire", author: "corinuss")
     {
         capability "Actuator"
-        capability "Light"
+        capability "FanControl"
         capability "Refresh"
         capability "Switch"
         capability "Switch Level"
 
-        command 'setLevel', [[name: "Light level percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Light level values [0-3].  Used by SwitchLevel capability."]]
-        command 'setLightLevel', [[name: "Light level (0-3)*", type:"NUMBER"]]
+        command 'setLevel', [[name: "Fan level percentage (0-100)*", type:"NUMBER", description:"Percentage is mapped to discrete Fan level values [0-4].  Used by SwitchLevel capability."]]
+        command 'setSpeed', [[name: "Fan speed", type:"ENUM", constraints: FanControlSpeed]]
 
         attribute "light", "number"
     }
@@ -52,6 +52,14 @@ metadata
     {
         input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging?", defaultValue: false
     }
+}
+
+//================
+// INITIALIZATION
+//================
+void configure()
+{
+    sendEvent(name: "supportedFanSpeeds", value: FanControlSpeed)
 }
 
 void logDebug (msg)
@@ -64,7 +72,7 @@ void logDebug (msg)
 
 void updateDeviceName(parentName)
 {
-    device.setName("$parentName Light")
+    device.setName("$parentName Fan")
 }
 
 // Refresh
@@ -74,39 +82,53 @@ void refresh()
     getParent().refresh()
 }
 
-// Light, Switch
+// Switch
 void on()
 {
-    getParent().lightOn()
+    setSpeed("on")
 }
 
-// Light, Switch
+// Switch
 void off()
 {
-    getParent().lightOff()
+    setSpeed("off")
 }
 
 // SwitchLevel
 void setLevel(level, duration = 0)
 {
     // 'duration' is not used
-    def lightLevel = (int)((level+33)/33.3);
-    setLightLevel(lightLevel);
+    getParent().setSpeedPercentage(level);
 }
 
-void setLightLevel(level)
+void setSpeed(String fanspeed)
 {
-    getParent().setLightLevel(level)
+    getParent().setSpeed(fanspeed)
+}
+
+void cycleSpeed()
+{
+    getParent().cycleSpeed()
 }
 
 // Should only be called from the Intellifire parent device.
-void setLightLevelFromParent(level)
+void setFanSpeedFromParent(String fanspeed, level)
 {
-    levelPercentage = (int)(level * 33.34)
-
-    sendEvent(name: "light", value: level, descriptionText: "${device.getDisplayName()} level was set to $level")
-    sendEvent(name: "level", value: levelPercentage, unit: "%", descriptionText: "${device.getDisplayName()} level was set to $levelPercentage%")
+    sendEvent(name: "speed", value: fanspeed, descriptionText: "${device.getDisplayName()} level was set to $fanspeed")
+    sendEvent(name: "level", value: level, unit: "%", descriptionText: "${device.getDisplayName()} level was set to $level%")
 
     def switchStatus = (level != 0) ? "on" : "off"
     sendEvent(name: "switch", value: switchStatus, descriptionText: "${device.getDisplayName()} was switched $switchStatus")
 }
+
+// Subset of officially supported FanControl speed names.
+// TODO - Move this into a library to be shared
+@Field FanControlSpeed =
+[
+    "off",
+    "low",
+    "medium",
+    "medium-high",
+    "high",
+    "on"
+]

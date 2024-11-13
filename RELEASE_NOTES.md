@@ -1,6 +1,23 @@
 # Hubitat Intellifire Release Notes
 This doc will contain a record of significant changes to this package.  Minor version updates might not be reported here.  Refer to the changelog at the top of the individual groovy files for those changes.
 
+## 2.3.0
+### Child device cleanup
+
+#### New Fan virtual Child Device (Optional)
+Similar to the Light child device, you can now create a Fan child device for controlling only the Fan component.  This child device is optional, as you can still fully control the fan via the main fireplace device.
+
+Some other Hubitat apps expect to be able to use the SwitchLevel capability to control fan percentage, though this is not part of the Hubitat specs.  The main fireplace module uses SwitchLevel to control flame height.  So if you need SwitchLevel for Fan control, this is the device to use.
+
+#### Other Child Device Cleanup
+* The Light Virtual Child Device now has its Device Name set (and updated) similarly to the main Fireplace.  This was missed during the 2.2.0 update.
+* "createVirtualLightDevice" has been replaced with a more generic "createVirtualChildDevice" that can create any supported child device type (currently Light and Fan).
+
+### Upgrade Firmware
+You can now tell your fireplace to check for a firmware upgrade and upgrade if avaiable.
+
+Also, scaffolding has been put in place to allow for this device driver to automatically request a firmware upgrade if your firmware is too old.  This feature is currently disabled, but will be used later to make a single upgrade request once H&H has released the new firmware to fix local control stability.
+
 ## 2.2.1
 Supporting new firmware string variable name, which changed in firmware 3.12.0 (or 3.11.0).
 

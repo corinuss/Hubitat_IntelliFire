@@ -25,6 +25,10 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    11/12/2024 v2.3.0   - Replaced "createVirtualLightDevice" with "createVirtualChildDevice".
+ *                          Adding optional Fan Virtual Child Device.
+ *                          Light child device name is now updated when parent device name is changed.
+ *                          Upgrade Firmware added.  Scaffolding in place to request one auto-update if firmware is too old.
  *    11/08/2024 v2.2.1   - Supporting new firmware string variable name, which changed in firmware 3.12.0 (or 3.11.0).
  *    11/03/2024 v2.2.0   - Adding brand, serial, and features to Device Details.  (Some static states moved here.)
  *                          Device name is now updated if received.  (User can still override by setting a Label.)
@@ -50,9 +54,11 @@ metadata
 {
     definition (name: "IntelliFire Fireplace", namespace: "IntelliFire", author: "corinuss")
     {
+        capability "Actuator"
         capability "FanControl"
         //capability "Light"      // Conflicts with "Switch".  Use a virtual device to handle the "Light" capability.
         capability "Refresh"
+        capability "Sensor"
         capability "Switch"
         capability "SwitchLevel"
         capability "TemperatureMeasurement"
@@ -62,7 +68,7 @@ metadata
         capability "Tone"
         
         command 'configure'
-        command 'createVirtualLightDevice'
+        command 'createVirtualChildDevice', [[name: "Device type", type:"ENUM", constraints: ChildDeviceTypes]]
         //command 'lightOff'
         //command 'lightOn'
         command 'setFlameHeight', [[name: "Flame height (0-4)*", type:"NUMBER"]]
@@ -75,6 +81,7 @@ metadata
         command 'setThermostatMode', [[name: "Hubitat Thermostat Mode", type:"ENUM", description:"(Same effect as the separate 'on' and 'off' buttons.)", constraints: ThermostatMode]]
         command 'setTimer', [[name: "Timer (0-180)*", description:"Minutes until the fireplace turns off.  0 to disable.", type:"NUMBER"]]
         command 'softReset'
+        command 'upgradeFirmware'
 
         attribute "errors", "string"
         attribute "fanspeedPercent", "number"
@@ -154,6 +161,21 @@ void moveSerialIfNeeded()
     }
 }
 
+void createVirtualChildDevice(deviceType)
+{
+    switch (deviceType)
+    {
+        case "Light":
+            createVirtualLightDevice()
+            break
+        case "Fan":
+            createVirtualFanDevice()
+            break
+        default:
+            log.error "Cannot create virtual device for unknown type $deviceType"
+            break
+    }
+}
 void updated()
 {
     // Backwards compat cleanup
@@ -211,6 +233,41 @@ void notifyLoginChange(isLoggedIn, loginUniqueId, initialization = false)
 //===========
 // FAN SPEED
 //===========
+
+void createVirtualFanDevice(overrideHasFan = false)
+{
+    if (!overrideHasFan && (device.getDataValue("featureFan") != "true"))
+    {
+        log.warn "Fireplace reports Fan feature not available.  Aborting child Fan creation."
+        return
+    }
+
+    def serial = device.getDataValue("serial")
+    if (serial == null)
+    {
+        log.error "No serial available.  Cannot create child Fan device."
+        return
+    }
+
+    def fireplaceFanDni = "IntelliFireFan-$serial"
+
+    def childDevice = getChildDevice(fireplaceFanDni)
+    if (childDevice == null)
+    {
+        log.info "Creating new Fan child device $fireplaceFanDni"
+        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Fan", fireplaceFanDni)
+        childDevice.updateDeviceName(device.getName());
+        childDevice.configure()
+
+        def currentFanSpeed = device.currentValue("speed")
+        childDevice.setFanSpeedFromParent(currentFanSpeed, getSpeedFromString(currentFanSpeed)*25)
+    }
+    else
+    {
+        log.info "Device '${childDevice.getDisplayName()}' already exists.  Not creating a new Fan child device."
+    }
+}
+
 
 // Google Home Community
 void setSpeedPercentage(fanspeedPercentage)
@@ -426,16 +483,14 @@ void createVirtualLightDevice(overrideHasLight = false)
     def childDevice = getChildDevice(fireplaceLightDni)
     if (childDevice == null)
     {
-        def myLabel = device.getLabel()
-        def childLabel = "$myLabel Light"
-
-        log.info "Creating new Light child device $childLabel"
-        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni, [label: childLabel])
+        log.info "Creating new Light child device $fireplaceLightDni"
+        childDevice = addChildDevice("IntelliFire", "IntelliFire Fireplace Virtual Light", fireplaceLightDni)
+        childDevice.updateDeviceName(device.getName());
         childDevice.setLightLevelFromParent(device.currentValue("light"))
     }
     else
     {
-        log.info "Device '${childDevice.getLabel()}' already exists.  Not creating a new Light child device."
+        log.info "Device '${childDevice.getDisplayName()}' already exists.  Not creating a new Light child device."
     }
 }
 
@@ -507,6 +562,11 @@ void setTimer(minutes)
 void softReset()
 {
     sendCommand("SOFT_RESET", 1)
+}
+
+void upgradeFirmware()
+{
+    sendCommand("UPGRADE_FIRMWARE", 1)
 }
 
 //===========
@@ -924,6 +984,15 @@ void consumePollData(pollDataMap, forceSchedule = false)
                     // Captures current fan speed if it was set by another control mechanism (remote or mobile app)
                     atomicState.fanspeedLast = valueInt
                 }
+
+                // Notify any child devices implementing FanControl
+                getChildDevices()?.each
+                {
+                    if (it.hasCapability("FanControl"))
+                    {
+                        it.setFanSpeedFromParent(FanControlSpeed[valueInt], fanspeedPercentage)
+                    }
+                }
                 break
 
             case "setpoint":
@@ -1122,6 +1191,33 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 }
                 break
 
+            case "fw_version":  // Old name before firmware 3.12.0
+            case "firmware_version":
+                def minimumFirmwareVersion = 0x00000000
+                def currentFirmwareVersion = Integer.MAX_VALUE
+                try
+                {
+                    currentFirmwareVersion = Integer.decode(value)
+                }
+                catch (e)
+                {
+                    log.warning "Failed to parse firmware version '$value': $e"
+                }
+
+                if ((atomicState.firmwareCheck ?: 0) < minimumFirmwareVersion)
+                {
+                    logDebug "Validating firmware version."
+                    atomicState.firmwareCheck = minimumFirmwareVersion
+                    if (currentFirmwareVersion < minimumFirmwareVersion)
+                    {
+                        def currentFirmwareString = pollDataMap.get("firmware_version_string", value)
+
+                        log.info "Firmware '$currentFirmwareString' detected.  Firmware '0.0.0' or later strongly recommended.  Checking for update."
+                        sendCommand("UPGRADE_FIRMWARE", 1);
+                    }
+                }
+                break
+
             case "brand":
                 updateDeviceData("brand", BRAND_MAP[value])
                 break
@@ -1130,12 +1226,17 @@ void consumePollData(pollDataMap, forceSchedule = false)
                 if (value != "" && value != device.getName())
                 {
                     device.setName(value)
+
+                    // Notify any child devices of the name change
+                    getChildDevices()?.each
+                    {
+                        it.updateDeviceName(value)
+                    }
                 }
                 break
 
             // Other events we may want to see and set.  Some are commented out to reduce event spam, since they aren't as useful or rarely change.
             //case "battery":                   // Emergency battery level (USB-C connection)
-            //case "firmware_version":          // Numeric firmware version (not useful)  (Named "fw_version" in older firmware before 3.12.0)
             //case "remote_downtime":           // How long has the remote been disconnected?
             //case "remote_uptime":             // How long has the remote been connected?
             //case "remote_connection_quality": // Connection quality of thermostat remote
@@ -1152,6 +1253,12 @@ void consumePollData(pollDataMap, forceSchedule = false)
     def previousSwitchStatus = device.currentValue("switch")
     def switchStatus = (powerStatus || thermostatStatus) ? "on" : "off"
     sendEvent(name: "switch", value: switchStatus, descriptionText:"${device.getDisplayName()} was switched $switchStatus")
+
+    if (switchStatus == "off")
+    {
+        // We're off, so no need to check anymore.
+        unschedule("verifyOff")
+    }
 
     // ThermostatMode
     // We've tied "heat" vs "off" to the switch value.
@@ -1383,6 +1490,12 @@ def sendCloudCommand(command, value)
     "heat"
 ]
 
+@Field ChildDeviceTypes =
+[
+    "Light",
+    "Fan"
+]
+
 @Field
 private static final INTELLIFIRE_COMMANDS =
 [
@@ -1404,7 +1517,7 @@ private static final INTELLIFIRE_COMMANDS =
     [
         cloudCommand: "beep",
         localCommand: "beep",
-        min: 1,
+        min: 0,
         max: 1,
     ],  // This doesn't actually seem to do anything
     "LIGHT":
@@ -1446,7 +1559,14 @@ private static final INTELLIFIRE_COMMANDS =
     [  // This can be used to "soft reset the unit"
         cloudCommand: "soft_reset",
         localCommand: "reset",  // Unaware of the local command for this one here
-        min: 1,
+        min: 0,
+        max: 1
+    ],
+    "UPGRADE_FIRMWARE":
+    [
+        cloudCommand: "upgrade_firmware",
+        localCommand: "upgrade_firmware",
+        min: 0,
         max: 1
     ]
 ]
