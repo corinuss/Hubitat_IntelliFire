@@ -2,8 +2,10 @@
 This doc will contain a record of significant changes to this package.  Minor version updates might not be reported here.  Refer to the changelog at the top of the individual groovy files for those changes.
 
 ## 2.3.0
-### Child device cleanup
+### Hubitat Package Manager
+You can now install and update using Hubitat Package Manager.
 
+### Child device cleanup
 #### New Fan virtual Child Device (Optional)
 Similar to the Light child device, you can now create a Fan child device for controlling only the Fan component.  This child device is optional, as you can still fully control the fan via the main fireplace device.
 
