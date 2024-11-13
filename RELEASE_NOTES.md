@@ -1,6 +1,9 @@
 # Hubitat Intellifire Release Notes
 This doc will contain a record of significant changes to this package.  Minor version updates might not be reported here.  Refer to the changelog at the top of the individual groovy files for those changes.
 
+## 2.3.1
+Missed adding the new Fan file to the HPM manifest.  No changes to any code.
+
 ## 2.3.0
 ### Hubitat Package Manager
 You can now install and update using Hubitat Package Manager.

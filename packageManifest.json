@@ -1,7 +1,7 @@
 {
   "packageName": "Hubitat IntelliFire",
   "author": "corinuss",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "minimumHEVersion": "0.0",
   "licenseFile": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/LICENSE",
   "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
@@ -21,6 +21,13 @@
       "name": "IntelliFire Fireplace Virtual Light",
       "namespace": "IntelliFire",
       "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace_Light.groovy",
+      "required": true
+    },
+    {
+      "id": "f8a36ba1-7f97-4c6a-b3c8-d93086420cc8",
+      "name": "IntelliFire Fireplace Virtual Fan",
+      "namespace": "IntelliFire",
+      "location": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/Driver/IntelliFire_Fireplace_Fan.groovy",
       "required": true
     }
   ],
