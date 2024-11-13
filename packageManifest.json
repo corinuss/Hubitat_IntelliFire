@@ -4,7 +4,7 @@
   "version": "2.3.1",
   "minimumHEVersion": "0.0",
   "licenseFile": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/LICENSE",
-  "documentationLink": "https://raw.githubusercontent.com/corinuss/Hubitat_IntelliFire/main/README.md",
+  "documentationLink": "https://github.com/corinuss/Hubitat_IntelliFire/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-intellifire-driver/125053",
   "dateReleased": "2024-11-12",
   "releaseNotes": "New Fan child device, other child device cleanup, and upgrade firmware control.",

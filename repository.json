@@ -1,7 +1,6 @@
 {
   "author": "corinuss",
   "gitHubUrl": "https://github.com/corinuss",
-  "payPalUrl": "https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=MHSDRAUK3TJAU&item_name=Hubitat+Development&currency_code=USD",
   "packages": [
     {
       "id": "7cd64587-d285-416d-8363-6eaebc4fd0fe",
