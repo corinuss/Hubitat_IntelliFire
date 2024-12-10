@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    12/10/2024 v2.3.2   - Fixed a bug where the new verifyOff functionality wasn't stopping its retries when the max retry count was hit.
  *    11/12/2024 v2.3.0   - Replaced "createVirtualLightDevice" with "createVirtualChildDevice".
  *                          Adding optional Fan Virtual Child Device.
  *                          Light child device name is now updated when parent device name is changed.
@@ -405,7 +406,7 @@ void verifyOff(data)
     if (switchStatus == "on")
     {
         int maxRetries = 15
-        if (retries < maxRetries)
+        if (data.retries < maxRetries)
         {
             log.warn "Fireplace has not turned off as requested.  Trying again.  (Retry ${data.retries}/$maxRetries)"
             off(data.retries)
