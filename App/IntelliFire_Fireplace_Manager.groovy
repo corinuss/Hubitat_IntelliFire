@@ -25,6 +25,7 @@
  *  SOFTWARE.
  *
  *  Change Log:
+ *    05/04/2026 v2.3.3   - Classifying the Manager as an "Integrations" app for Hubitat 2.5.0+.
  *    11/03/2024 v2.2.0   - Fireplace name is now assigned to device name rather than label (to allow user override).
  *    05/05/2024 v2.1.0   - Cloud Polling can now be set independently from Control.
  *    01/15/2024 v2.0.0   - Cloud Control support and a lot of cleanup.  See Release Notes for details.
@@ -45,6 +46,7 @@ definition(
     author: "corinuss",
     description: "Uses IntelliFire servers to create and update IntelliFire Fireplace devices",
     category: "Integrations",
+    menu: "Integrations",
     iconUrl: "",
     iconX2Url: "",
     iconX3Url: "",
